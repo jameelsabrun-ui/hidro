@@ -1,0 +1,57 @@
+# ==============================
+# File .gitignore untuk HidroKu
+# ==============================
+# File yang TIDAK BOLEH di-commit ke GitHub:
+# (berisi data pribadi, cache, atau file yang auto-generated)
+
+# ---------- DATABASE ----------
+# Database SQLite berisi data sensor & tanaman user.
+# JANGAN commit! Nanti setiap user punya data sendiri-sendiri.
+*.db
+*.sqlite
+*.sqlite3
+hidroponik.db
+
+# ---------- PYTHON CACHE ----------
+# File bytecode cache Python (__pycache__)
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Cache pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ---------- VIRTUAL ENVIRONMENT ----------
+# Folder virtual environment (jika user membuat venv)
+venv/
+ENV/
+env/
+.venv/
+
+# ---------- IDE / EDITOR ----------
+# Settingan VS Code, PyCharm, dll (setiap user beda)
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ---------- SISTEM OPERASI ----------
+# File sisa macOS / Windows
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ---------- LOG FILE ----------
+# File log jika nanti ada
+*.log
+logs/
+
+# ---------- ENVIRONMENT VARIABLES ----------
+# File berisi secret key, password, API key (JANGAN pernah commit!)
+.env
+.env.local
+.env.*.local

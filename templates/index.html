@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hidroponik Dashboard - Monitoring Tanaman</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <!--
+      Perbaikan SEC-7 + DOC-5:
+      - Pakai PINNED VERSION chart.js 4.4.1 (bukan tag @latest) untuk hindari
+        breaking change secara diam-diam.
+      - (Opsional, lakukan sendiri): Tambahkan SRI integrity hash.
+        Generate dari https://www.srihash.org/ untuk URL di bawah ini,
+        lalu tempel ke atribut integrity="...". Contoh:
+        <script src="..." integrity="sha384-HASH_ASLI" crossorigin="anonymous">
+        JIKA HASH YANG DIPASANG TIDAK SESUAI, BROWSER AKAN MEMBLOKIR SCRIPT INI
+        (grafik tidak akan muncul). Jadi: generate sendiri atau kosongkan atributnya.
+      - Dokumentasi resmi: https://www.chartjs.org/docs/4.4.1/getting-started/installation.html
+    -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+    <!-- ============== SIDEBAR / NAVIGASI ============== -->
+    <nav class="sidebar">
+        <div class="sidebar-header">
+            <div class="logo">🌱</div>
+            <h1>HidroKu</h1>
+            <p class="subtitle">Sistem Hidroponik Pintar</p>
+        </div>
+        <ul class="nav-menu">
+            <li class="nav-item active" data-section="dashboard">
+                <span class="nav-icon">📊</span> Dashboard
+            </li>
+            <li class="nav-item" data-section="plants">
+                <span class="nav-icon">🌿</span> Tanaman
+            </li>
+            <li class="nav-item" data-section="schedule">
+                <span class="nav-icon">📅</span> Jadwal
+            </li>
+            <li class="nav-item" data-section="guide">
+                <span class="nav-icon">📖</span> Panduan
+            </li>
+        </ul>
+        <div class="sidebar-footer">
+            <p class="version">v1.0 - Siap IoT</p>
+        </div>
+    </nav>
+
+    <!-- ============== KONTEN UTAMA ============== -->
+    <main class="main-content">
+
+        <!-- Header Atas -->
+        <header class="top-header">
+            <div>
+                <h2 id="page-title">Dashboard Monitoring</h2>
+                <p class="date-text" id="current-date"></p>
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-simulate" onclick="simulateSensor()">
+                    🔄 Simulasi Data Sensor
+                </button>
+                <div class="status-indicator" id="system-status">
+                    <span class="status-dot"></span>
+                    <span>Sistem Aktif</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- ===== SECTION: DASHBOARD ===== -->
+        <section class="content-section active" id="section-dashboard">
+
+            <!-- Kartu Status Sensor -->
+            <div class="sensor-grid">
+                <div class="sensor-card card-ph">
+                    <div class="sensor-head">
+                        <span class="sensor-icon">🧪</span>
+                        <span class="sensor-label">pH Air</span>
+                    </div>
+                    <div class="sensor-value" id="val-ph">--</div>
+                    <div class="sensor-status" id="status-ph">Memuat...</div>
+                    <div class="sensor-range">Ideal: 5.8 - 6.5</div>
+                </div>
+
+                <div class="sensor-card card-tds">
+                    <div class="sensor-head">
+                        <span class="sensor-icon">💧</span>
+                        <span class="sensor-label">TDS (Nutrisi)</span>
+                    </div>
+                    <div class="sensor-value"><span id="val-tds">--</span> <small>ppm</small></div>
+                    <div class="sensor-status" id="status-tds">Memuat...</div>
+                    <div class="sensor-range">Ideal: 800 - 1400 ppm</div>
+                </div>
+
+                <div class="sensor-card card-temp">
+                    <div class="sensor-head">
+                        <span class="sensor-icon">🌡️</span>
+                        <span class="sensor-label">Suhu Air</span>
+                    </div>
+                    <div class="sensor-value"><span id="val-temp">--</span> <small>°C</small></div>
+                    <div class="sensor-status" id="status-temp">Memuat...</div>
+                    <div class="sensor-range">Ideal: 22 - 28 °C</div>
+                </div>
+
+                <div class="sensor-card card-hum">
+                    <div class="sensor-head">
+                        <span class="sensor-icon">☁️</span>
+                        <span class="sensor-label">Kelembaban</span>
+                    </div>
+                    <div class="sensor-value"><span id="val-hum">--</span> <small>%</small></div>
+                    <div class="sensor-status" id="status-hum">Memuat...</div>
+                    <div class="sensor-range">Ideal: 50 - 70 %</div>
+                </div>
+
+                <div class="sensor-card card-water">
+                    <div class="sensor-head">
+                        <span class="sensor-icon">🚰</span>
+                        <span class="sensor-label">Level Air</span>
+                    </div>
+                    <div class="water-tank">
+                        <div class="water-fill" id="water-fill" style="height: 0%"></div>
+                        <span class="water-text" id="val-water">--%</span>
+                    </div>
+                    <div class="sensor-status" id="status-water">Memuat...</div>
+                </div>
+            </div>
+
+            <!-- Grafik Monitoring -->
+            <div class="chart-container">
+                <h3>📈 Riwayat Monitoring (24 Jam Terakhir)</h3>
+                <canvas id="monitorChart"></canvas>
+            </div>
+
+            <!-- Ringkasan Cepat -->
+            <div class="summary-row">
+                <div class="summary-box">
+                    <h4>🌿 Total Tanaman</h4>
+                    <p class="summary-number" id="total-plants">0</p>
+                </div>
+                <div class="summary-box">
+                    <h4>✅ Jadwal Selesai</h4>
+                    <p class="summary-number" id="total-done">0</p>
+                </div>
+                <div class="summary-box">
+                    <h4>⚠️ Perlu Perhatian</h4>
+                    <p class="summary-number warning" id="total-warning">0</p>
+                </div>
+                <div class="summary-box">
+                    <h4>📊 Data Tersimpan</h4>
+                    <p class="summary-number" id="total-data">0</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- ===== SECTION: TANAMAN ===== -->
+        <section class="content-section" id="section-plants">
+            <div class="section-header">
+                <h3>Kelola Tanaman Hidroponik</h3>
+                <button class="btn btn-primary" onclick="showPlantModal()">
+                    ➕ Tambah Tanaman
+                </button>
+            </div>
+            <div class="plants-grid" id="plants-list">
+                <!-- Daftar tanaman diisi otomatis oleh JavaScript -->
+            </div>
+        </section>
+
+        <!-- ===== SECTION: JADWAL ===== -->
+        <section class="content-section" id="section-schedule">
+            <div class="section-header">
+                <h3>Jadwal Perawatan Rutin</h3>
+            </div>
+            <div class="schedule-list" id="schedule-list">
+                <!-- Daftar jadwal diisi otomatis oleh JavaScript -->
+            </div>
+        </section>
+
+        <!-- ===== SECTION: PANDUAN ===== -->
+        <section class="content-section" id="section-guide">
+            <h3>📖 Panduan Hidroponik Pemula</h3>
+            <div class="guide-grid">
+                <div class="guide-card">
+                    <h4>🎯 pH Air</h4>
+                    <p>pH ideal untuk tanaman hidroponik adalah <b>5.8 - 6.5</b>. Jika terlalu tinggi, turunkan dengan pH Down. Jika terlalu rendah, naikkan dengan pH Up.</p>
+                </div>
+                <div class="guide-card">
+                    <h4>💧 Nutrisi (TDS)</h4>
+                    <p>TDS mengukur konsentrasi nutrisi. Tanaman sayur daun butuh <b>800-1200 ppm</b>, tanaman buah butuh <b>1000-1600 ppm</b>.</p>
+                </div>
+                <div class="guide-card">
+                    <h4>🌡️ Suhu</h4>
+                    <p>Suhu air ideal <b>22-28°C</b>. Suhu terlalu tinggi menyebabkan bakteri berkembang, terlalu rendah menghambat pertumbuhan.</p>
+                </div>
+                <div class="guide-card">
+                    <h4>🚰 Pergantian Air</h4>
+                    <p>Ganti air nutrisi setiap <b>1-2 minggu</b> sekali. Bersihkan bak penampungan untuk mencegah lumut dan bakteri.</p>
+                </div>
+                <div class="guide-card">
+                    <h4>☀️ Cahaya</h4>
+                    <p>Tanaman butuh cahaya matahari minimal <b>6 jam/hari</b>. Jika indoor, gunakan lampu LED grow light.</p>
+                </div>
+                <div class="guide-card">
+                    <h4>🔌 IoT Integration</h4>
+                    <p>Website ini siap diintegrasikan dengan sensor IoT. Kirim data sensor ke endpoint <code>/api/sensor</code> dengan method POST.</p>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- ============== MODAL TAMBAH TANAMAN ============== -->
+    <div class="modal" id="plantModal">
+        <div class="modal-content">
+            <span class="modal-close" onclick="hidePlantModal()">&times;</span>
+            <h3>Tambah Tanaman Baru</h3>
+            <form id="plantForm" onsubmit="addPlant(event)">
+                <label>Nama Tanaman:</label>
+                <input type="text" id="plantName" required placeholder="Contoh: Selada Keriting">
+
+                <label>Jenis Tanaman:</label>
+                <select id="plantType" required>
+                    <option value="">Pilih jenis...</option>
+                    <option value="Sayur Daun">Sayur Daun</option>
+                    <option value="Buah">Buah</option>
+                    <option value="Herbal">Herbal</option>
+                    <option value="Bunga">Bunga</option>
+                </select>
+
+                <label>Status Awal:</label>
+                <select id="plantStatus">
+                    <option value="Sehat">Sehat</option>
+                    <option value="Perlu perhatian">Perlu perhatian</option>
+                    <option value="Baru ditanam">Baru ditanam</option>
+                </select>
+
+                <label>Catatan:</label>
+                <textarea id="plantNotes" rows="3" placeholder="Catatan tentang tanaman ini..."></textarea>
+
+                <button type="submit" class="btn btn-primary">💾 Simpan</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- File JavaScript utama -->
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
