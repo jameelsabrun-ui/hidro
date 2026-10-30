@@ -1,1 +1,6 @@
+# Library utama yang dibutuhkan aplikasi
 Flask>=3.0.0
+python-dotenv>=1.0.0
+
+# Untuk menjalankan test (opsional, hanya saat development)
+pytest>=7.0.0

@@ -52,14 +52,18 @@ Semua data bisa dibaca/ditulis lewat JSON API (lihat bagian **Contoh Penggunaan*
 hidro/
 ├── app.py                      # Backend Flask + API + Database (inti aplikasi)
 ├── requirements.txt            # Daftar library Python yang dibutuhkan
+├── .env.example                # Contoh konfigurasi (host, port, database)
+├── .env                        # Konfigurasi pribadi (copy dari .env.example, tidak ikut GitHub)
 ├── hidroponik.db               # (Auto-generated) File database SQLite
 ├── templates/
 │   └── index.html              # Halaman web utama (HTML)
-└── static/
-    ├── css/
-    │   └── style.css           # Styling, warna, layout (tampilan cantik)
-    └── js/
-        └── app.js              # Interaksi user, grafik, panggil API
+├── static/
+│   ├── css/
+│   │   └── style.css           # Styling, warna, layout (tampilan cantik)
+│   └── js/
+│       └── app.js              # Interaksi user, grafik, panggil API
+└── tests/
+    └── test_app.py             # Test otomatis dengan pytest
 ```
 
 | File | Peran untuk Pemula |
@@ -69,6 +73,8 @@ hidro/
 | `static/css/style.css` | "Kosmetik" → warna hijau tema hidroponik, bentuk kartu, responsif HP. |
 | `static/js/app.js` | "Saraf" → tombol klik, auto refresh data, gambar grafik. |
 | `hidroponik.db` | "Catatan" → semua data tersimpan disini, bisa dibuka dengan [DB Browser for SQLite](https://sqlitebrowser.org/). |
+| `.env` | "Panel pengaturan" → ubah host, port, mode debug tanpa edit `app.py`. |
+| `tests/test_app.py` | "Petugas pemeriksa" → otomatis mengetes apakah semua fitur masih jalan. |
 
 ---
 
@@ -81,21 +87,37 @@ hidro/
 cd /home/memorygroups/Documents/trae_projects/hidro
 ```
 
-### Langkah 2: Install library Flask
+### Langkah 2: Install library yang dibutuhkan
 ```bash
-pip install Flask
+pip install -r requirements.txt
 ```
 
 Jika `pip` error permission di Linux, coba salah satu:
 ```bash
-pip install --user Flask        # install untuk user ini saja
-# ATAU
-python -m venv venv             # buat virtual environment (direkomendasikan)
+pip install --user -r requirements.txt   # install untuk user ini saja
+# ATAU (direkomendasikan)
+python -m venv venv             # buat virtual environment
 source venv/bin/activate        # aktifkan virtual env
-pip install Flask               # install di dalam venv
+pip install -r requirements.txt # install di dalam venv
 ```
 
-Hanya butuh **Flask satu library**. `sqlite3` (database) dan modul lain adalah *bawaan Python* — tidak perlu install lagi. ✅
+Isi `requirements.txt`: **Flask** (web), **python-dotenv** (baca file `.env`), dan **pytest** (untuk test). `sqlite3` (database) sudah *bawaan Python* — tidak perlu install. ✅
+
+### Langkah 3: (Opsional) Buat file konfigurasi
+Aplikasi sudah jalan tanpa ini, tapi kalau ingin mengubah port/host:
+```bash
+cp .env.example .env
+```
+Lalu buka `.env` dan sesuaikan. Isinya:
+
+| Pengaturan | Default | Arti |
+|---|---|---|
+| `FLASK_HOST` | `0.0.0.0` | `0.0.0.0` = bisa diakses HP/IoT di Wi-Fi yang sama. `127.0.0.1` = komputer ini saja. |
+| `FLASK_PORT` | `5000` | Port server. Ubah jika bentrok dengan program lain. |
+| `FLASK_DEBUG` | `0` | `0` = aman (disarankan). `1` = mode belajar (jangan dipakai di jaringan publik). |
+| `DB_PATH` | `hidroponik.db` | Nama file database. |
+
+> File `.env` **tidak akan ikut ter-upload ke GitHub** (sudah diblokir lewat `.gitignore`), jadi aman untuk pengaturan pribadi.
 
 ---
 
@@ -202,29 +224,23 @@ curl -X POST http://localhost:5000/api/sensor \
 
 ## ✅ Cara Test
 
-### A. Test Otomatis (pakai Flask test_client)
-Jalankan 1 perintah ini untuk memverifikasi 8+ skenario berbeda (dashboard, API sensor, validasi, tanaman, jadwal):
+### A. Test Otomatis (pakai pytest) — direkomendasikan
+Semua skenario test sudah tersimpan di [tests/test_app.py](file:///home/memorygroups/Documents/trae_projects/hidro/tests/test_app.py). Jalankan:
 
 ```bash
-cd /home/memorygroups/Documents/trae_projects/hidro && python -c "
-from app import init_db, app
-init_db()
-client = app.test_client()
-
-# --- Isi sendiri skenario test sesuai kebutuhan ---
-# Contoh: Test halaman utama
-r = client.get('/')
-assert r.status_code == 200, 'Halaman utama error'
-
-# Contoh: Validasi sensor
-r = client.post('/api/sensor', json={'ph':999,'tds':1000,'temperature':25,'humidity':60,'water_level':80})
-assert r.status_code == 400, 'ph ngaco harusnya ditolak'
-
-print('✅ Semua test sederhana LULUS')
-"
+python -m pytest -v
 ```
 
-Jika tulisan hijau `✅ Semua test sederhana LULUS` muncul → kode berjalan normal.
+Hasil yang diharapkan (semua hijau):
+```
+tests/test_app.py::test_halaman_utama_terbuka PASSED
+tests/test_app.py::test_sensor_terbaru_lengkap PASSED
+tests/test_app.py::test_kirim_sensor_diluar_rentang_ditolak PASSED
+... (total 16 test)
+============================== 16 passed in 2.6s ===============================
+```
+
+> Test memakai **database sementara** di folder temp, jadi data asli di `hidroponik.db` **tidak akan terhapus/terganggu**.
 
 ### B. Test Manual Langkah demi Langkah
 | Langkah | Yang Dilakukan | Hasil yang Diharapkan |
@@ -244,17 +260,17 @@ Jika tulisan hijau `✅ Semua test sederhana LULUS` muncul → kode berjalan nor
 
 | # | Gejala | Penyebab | Solusi |
 |---|---|---|---|
-| **1** | `ModuleNotFoundError: No module named 'flask'` | Flask belum diinstall | Jalankan `pip install Flask`. Jika masih error: coba `pip3 install Flask` atau buat virtual environment. |
-| **2** | `Address already in use :::5000` atau `Port 5000 is in use` | Ada program lain pakai port 5000 (atau server Flask lama belum mati) | Tutup terminal lama (Ctrl+C). Atau ubah port di baris terakhir [app.py:444](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L444) → `port=5001` atau port lain. |
+| **1** | `ModuleNotFoundError: No module named 'flask'` | Library belum diinstall | Jalankan `pip install -r requirements.txt`. Jika masih error: coba `pip3 install -r requirements.txt` atau buat virtual environment (lihat bagian **Cara Install**). |
+| **2** | `Address already in use :::5000` atau `Port 5000 is in use` | Ada program lain pakai port 5000 (atau server Flask lama belum mati) | Tutup terminal lama (Ctrl+C). Atau ubah `FLASK_PORT` di file `.env` (contoh `.env.example`), atau langsung di [app.py:467](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L467) → `PORT` jadi `5001`. |
 | **3** | Buka `http://IP:5000` dari HP **tidak bisa dibuka** | Firewall komputer / beda jaringan | Pastikan HP dan komputer **terhubung Wi-Fi yang SAMA**. Cek `ufw status` / firewall Linux → izinkan port 5000 (`sudo ufw allow 5000` sementara). Matikan VPN. |
 | **4** | Semua kartu sensor menampilkan **`--`** dan bertuliskan "Memuat..." | Frontend gagal memanggil API / DB kosong | Buka DevTools → Console (F12 di browser) untuk lihat error. Pastikan Flask server sedang berjalan. Jika DB kosong: restart server dengan `python app.py` (auto seed). |
 | **5** | **Grafik tidak muncul** (hanya tulisan judul) | CDN Chart.js tidak termuat (offline / diblokir internet / DNS) | Pastikan komputer punya akses internet (CDN Chart.js di-load dari jsdelivr). Jika offline permanen: download `chart.umd.min.js` secara lokal, taruh di `static/js/`, lalu ubah `<script src=...>` di [index.html:20](file:///home/memorygroups/Documents/trae_projects/hidro/templates/index.html#L20) menjadi file lokal. |
-| **6** | Setelah kirim data dari ESP32 → response **400 Bad Request** | Ada field yang salah (ph diluar 3-10, tds < 50, dst) | Lihat field `errors` di response JSON → perbaiki nilai sensor atau ubah rentang di konstanta `SENSOR_RANGES` [app.py:20-25](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L20-L25). |
+| **6** | Setelah kirim data dari ESP32 → response **400 Bad Request** | Ada field yang salah (ph diluar 3-10, tds < 50, dst) | Lihat field `errors` di response JSON → perbaiki nilai sensor atau ubah rentang di konstanta `SENSOR_RANGES` [app.py:39-45](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L39-L45). |
 | **7** | Tombol **Simulasi Data Sensor** diklik → toast **❌ Gagal simulasi** | Endpoint method salah atau error server | Pastikan server di-restart setelah edit app.py. Simulate harus pakai **POST** (bukan GET). |
-| **8** | `OperationalError: database is locked` (saat deploy gunicorn / banyak akses) | SQLite mode default tidak cocok untuk concurrency tinggi | Tambahkan `conn.execute("PRAGMA journal_mode=WAL;")` di dalam fungsi `get_db()` [app.py:22-26](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L22-L26) untuk mengaktifkan **WAL mode** (Write-Ahead Logging). Untuk trafik tinggi → nanti migrasi ke PostgreSQL. |
-| **9** | Menjalankan via `flask --app app run` → **data tanaman jadwal kosong** | Karena init_db() dipindahkan ke blok `if __name__` (hindari DB lock worker) | Jalankan via `python app.py` (direkomendasikan). ATAU buka komentar `# init_db()` di [app.py:153](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L153). |
+| **8** | `OperationalError: database is locked` (saat deploy gunicorn / banyak akses) | SQLite mode default tidak cocok untuk concurrency tinggi | **Sudah ditangani**: aplikasi otomatis mengaktifkan **WAL mode** di fungsi `get_db()` [app.py:56-64](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L56-L64). Jika masih muncul pada trafik sangat tinggi → pertimbangkan migrasi ke PostgreSQL. |
+| **9** | Menjalankan via `flask --app app run` → **data tanaman/jadwal kosong** | Karena init_db() dipindahkan ke blok `if __name__` (hindari DB lock worker) | Jalankan via `python app.py` (direkomendasikan). ATAU buka komentar `# init_db()` di [app.py:176](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L176). |
 | **10** | Data sensor tidak berubah walau ESP32 kirim tiap detik | **Auto refresh frontend 10 detik** / limit history 20 data terakhir | Ubah angka di `setInterval(loadSensorData, 10000)` [app.js:12](file:///home/memorygroups/Documents/trae_projects/hidro/static/js/app.js#L12) menjadi `3000` (3 detik) atau sesuai kebutuhan. |
-| **11** | Menambah jenis tanaman baru (misal "Umbi") tapi tidak opsi di select | HTML form + whitelist Python harus sinkron | Edit `<option value="Umbi">Umbi</option>` di [index.html:221-227](file:///home/memorygroups/Documents/trae_projects/hidro/templates/index.html#L221-L227) **DAN** tambahkan ke `VALID_PLANT_TYPES` di [app.py:15](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L15) + tambahkan emoji di `emojiMap` [app.js:375](file:///home/memorygroups/Documents/trae_projects/hidro/static/js/app.js#L375). |
+| **11** | Menambah jenis tanaman baru (misal "Umbi") tapi tidak opsi di select | HTML form + whitelist Python harus sinkron | Edit `<option value="Umbi">Umbi</option>` di [index.html:221-227](file:///home/memorygroups/Documents/trae_projects/hidro/templates/index.html#L221-L227) **DAN** tambahkan ke `VALID_PLANT_TYPES` di [app.py:34](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L34) + tambahkan emoji di `emojiMap` [app.js:375](file:///home/memorygroups/Documents/trae_projects/hidro/static/js/app.js#L375). |
 | **12** | Ingin reset semua data bersih (mulai dari nol) | Database sudah terisi banyak data percobaan | **Hapus file `hidroponik.db`** → restart server → database baru + seed awal otomatis dibuat ulang. |
 
 ---

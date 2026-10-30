@@ -4,11 +4,30 @@ import sqlite3
 import random
 import os
 
+# Baca konfigurasi dari file .env (jika ada).
+# Kalau python-dotenv belum diinstall, aplikasi tetap jalan pakai nilai default.
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+
 # ==================== KONFIGURASI ====================
 app = Flask(__name__)
 
-# Path file database SQLite (ada di folder proyek)
-DB_PATH = os.path.join(os.path.dirname(__file__), 'hidroponik.db')
+# --- Pengaturan yang bisa diubah lewat file .env (lihat .env.example) ---
+HOST = os.environ.get('FLASK_HOST', '0.0.0.0')       # 0.0.0.0 = bisa diakses dari LAN
+PORT = int(os.environ.get('FLASK_PORT', '5000'))     # Port server web
+DEBUG = os.environ.get('FLASK_DEBUG', '0') == '1'    # Debug: 0=mati, 1=nyala
+
+# Path file database SQLite (ada di folder proyek).
+# Bisa diganti lewat .env. Berguna saat testing: pakai DB sementara
+# supaya data asli di hidroponik.db tidak terganggu.
+DB_PATH = os.path.join(
+    os.path.dirname(__file__),
+    os.environ.get('DB_PATH', 'hidroponik.db')
+)
 
 # Daftar nilai yang DIWOJALKAN (whitelist) untuk validasi input.
 # (ERR-4, VAL-3, VAL-4) menghindari user mengetik string sembarangan.
@@ -38,6 +57,10 @@ def get_db():
     """Membuka koneksi ke database SQLite"""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row  # Biar hasil query bisa diakses seperti dictionary
+    # WAL mode (Write-Ahead Logging): lebih tahan saat database diakses
+    # bersamaan — misalnya alat IoT mengirim data sambil dashboard dibuka.
+    # Mencegah error "database is locked".
+    conn.execute('PRAGMA journal_mode=WAL')
     return conn
 
 
@@ -440,5 +463,5 @@ if __name__ == '__main__':
     except Exception as e:
         print(f"[PERINGATAN] Gagal init database: {e}")
 
-    # Perbaikan SEC-1: debug=False MATIKAN mode debug
-    app.run(debug=False, host='0.0.0.0', port=5000)
+    # Host, port, dan debug diambil dari konfigurasi (.env / nilai default).
+    app.run(debug=DEBUG, host=HOST, port=PORT)
