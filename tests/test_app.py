@@ -23,8 +23,13 @@ def client():
 
     # 2. Simpan pengaturan asli, lalu atur kondisi bersih untuk test
     api_key_asli = app_module.API_KEY
+    token_asli = app_module.TELEGRAM_BOT_TOKEN
+    chat_id_asli = app_module.TELEGRAM_CHAT_ID
     app_module.API_KEY = ''               # default test: proteksi API key dimatikan
+    app_module.TELEGRAM_BOT_TOKEN = ''    # default test: notifikasi Telegram dimatikan
+    app_module.TELEGRAM_CHAT_ID = ''
     app_module._riwayat_request.clear()   # reset catatan rate limit
+    app_module._terakhir_notif.clear()    # reset catatan cooldown notifikasi
 
     # 3. Arahkan aplikasi ke database sementara, lalu isi data awal
     app_module.DB_PATH = tmp.name
@@ -39,7 +44,10 @@ def client():
 
     # Kembalikan pengaturan asli + bersihkan file database (dan WAL/SHM-nya)
     app_module.API_KEY = api_key_asli
+    app_module.TELEGRAM_BOT_TOKEN = token_asli
+    app_module.TELEGRAM_CHAT_ID = chat_id_asli
     app_module._riwayat_request.clear()
+    app_module._terakhir_notif.clear()
     for path in (tmp.name, tmp.name + '-wal', tmp.name + '-shm'):
         if os.path.exists(path):
             os.remove(path)
@@ -216,3 +224,50 @@ def test_body_terlalu_besar_ditolak(client):
     r = client.post('/api/sensor', data=body_besar,
                     content_type='application/json')
     assert r.status_code == 413
+
+
+# ==================== TEST NOTIFIKASI TELEGRAM (Tahap 4) ====================
+
+def test_telegram_nonaktif_jika_kosong(client):
+    """telegram_aktif() harus False kalau token/chat id belum diisi."""
+    assert app_module.telegram_aktif() is False
+
+
+def test_kirim_telegram_tidak_error_saat_mati(client):
+    """kirim_telegram() mengembalikan False (bukan error) saat belum dikonfigurasi."""
+    assert app_module.kirim_telegram('pesan tes') is False
+
+
+def test_cek_sensor_aman_saat_notif_mati(client):
+    """cek_sensor_dan_notif() tidak error walau nilai di luar rentang ideal."""
+    data = {'ph': 9.0, 'tds': 20, 'temperature': 40,
+            'humidity': 10, 'water_level': 5}
+    assert app_module.cek_sensor_dan_notif(data) is None
+
+
+def test_cooldown_notifikasi(client):
+    """Masalah yang sama tidak boleh dikirim dua kali dalam masa cooldown."""
+    app_module._terakhir_notif.clear()
+    assert app_module.boleh_kirim_notif('ph') is True    # pertama kali: boleh
+    assert app_module.boleh_kirim_notif('ph') is False   # langsung kedua: diblokir
+
+
+def test_tidak_kirim_notif_saat_nilai_normal(client):
+    """Semua nilai dalam rentang ideal -> tidak ada notifikasi yang dikirim."""
+    app_module.TELEGRAM_BOT_TOKEN = 'token-palsu'
+    app_module.TELEGRAM_CHAT_ID = '12345'
+    app_module._terakhir_notif.clear()
+
+    data = {'ph': 6.0, 'tds': 1000, 'temperature': 25,
+            'humidity': 60, 'water_level': 80}
+    app_module.cek_sensor_dan_notif(data)
+
+    # Tidak ada masalah -> tidak ada catatan cooldown
+    assert app_module._terakhir_notif == {}
+
+
+def test_endpoint_tes_notif_tolak_saat_belum_dikonfigurasi(client):
+    """POST /api/notif/test tanpa konfigurasi -> 400 dengan pesan jelas."""
+    r = client.post('/api/notif/test')
+    assert r.status_code == 400
+    assert 'belum dikonfigurasi' in r.get_json()['error'].lower()

@@ -4,6 +4,8 @@ import sqlite3
 import random
 import os
 import time
+import json
+import urllib.request
 
 # Baca konfigurasi dari file .env (jika ada).
 # Kalau python-dotenv belum diinstall, aplikasi tetap jalan pakai nilai default.
@@ -44,6 +46,16 @@ RATE_LIMIT_PER_MINUTE = int(os.environ.get('RATE_LIMIT_PER_MINUTE', '60'))
 # jadi 1 MB sudah sangat longgar — ini mencegah payload raksasa).
 app.config['MAX_CONTENT_LENGTH'] = 1 * 1024 * 1024
 
+# --- Pengaturan notifikasi Telegram (Tahap 4) ---
+# Token & chat ID didapat dari bot Telegram buatan @BotFather.
+# Kosongkan keduanya untuk mematikan fitur notifikasi.
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
+TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
+
+# Jeda minimal antar notifikasi untuk masalah yang sama (dalam MENIT),
+# supaya HP tidak dibanjiri pesan berulang.
+NOTIF_COOLDOWN_MINUTES = int(os.environ.get('NOTIF_COOLDOWN_MINUTES', '30'))
+
 # Daftar nilai yang DIWOJALKAN (whitelist) untuk validasi input.
 # (ERR-4, VAL-3, VAL-4) menghindari user mengetik string sembarangan.
 VALID_PLANT_TYPES = ['Sayur Daun', 'Buah', 'Herbal', 'Bunga']
@@ -57,6 +69,17 @@ SENSOR_RANGES = {
     'temperature': (0.0,  50.0),
     'humidity':    (0.0,  100.0),
     'water_level': (0.0,  100.0),
+}
+
+# Rentang IDEAL untuk tanaman hidroponik (dipakai khusus untuk NOTIFIKASI).
+# Bedanya dengan SENSOR_RANGES: yang atas itu batas "masuk akal" untuk validasi,
+# sedangkan yang ini batas "sehat" — kalau diluar, kita kirim peringatan.
+IDEAL_RANGES = {
+    'ph':          (5.5,   6.5),
+    'tds':         (500.0, 1500.0),
+    'temperature': (18.0,  28.0),
+    'humidity':    (50.0,  80.0),
+    'water_level': (20.0,  100.0),
 }
 
 # CATATAN KEAMANAN (SEC-1, SEC-5):
@@ -99,6 +122,92 @@ def kena_rate_limit(ip, batas_per_menit):
     daftar.append(sekarang)
     _riwayat_request[ip] = daftar
     return False
+
+
+# ==================== NOTIFIKASI TELEGRAM (Tahap 4) ====================
+
+# Waktu notifikasi terakhir per jenis masalah: {jenis: waktu}
+# Disimpan di memori, otomatis kosong lagi saat server di-restart.
+_terakhir_notif = {}
+
+
+def telegram_aktif():
+    """True jika bot token dan chat ID sudah diisi di .env."""
+    return bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
+
+
+def kirim_telegram(pesan):
+    """
+    Mengirim pesan ke Telegram lewat Bot API.
+    Hanya memakai library bawaan Python (tidak perlu install apa-apa).
+    Mengembalikan True jika berhasil dikirim.
+    """
+    if not telegram_aktif():
+        return False
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    isi = json.dumps({
+        'chat_id': TELEGRAM_CHAT_ID,
+        'text': pesan,
+        'parse_mode': 'HTML',
+    }).encode('utf-8')
+
+    permintaan = urllib.request.Request(
+        url, data=isi, headers={'Content-Type': 'application/json'}
+    )
+    try:
+        # timeout 5 detik supaya server web tidak menggantung terlalu lama
+        with urllib.request.urlopen(permintaan, timeout=5) as respon:
+            return respon.status == 200
+    except Exception as e:
+        print(f"[Telegram] Gagal mengirim notifikasi: {e}")
+        return False
+
+
+def boleh_kirim_notif(jenis):
+    """
+    Membatasi frekuensi notifikasi: masalah yang sama hanya dikirim
+    sekali per NOTIF_COOLDOWN_MINUTES menit.
+    """
+    sekarang = time.time()
+    terakhir = _terakhir_notif.get(jenis, 0)
+    if sekarang - terakhir < NOTIF_COOLDOWN_MINUTES * 60:
+        return False
+    _terakhir_notif[jenis] = sekarang
+    return True
+
+
+def cek_sensor_dan_notif(data):
+    """
+    Membandingkan data sensor dengan IDEAL_RANGES.
+    Jika ada nilai di luar rentang ideal, kirim notifikasi Telegram
+    (dengan jeda cooldown agar tidak spam).
+    """
+    if not telegram_aktif():
+        return  # Fitur notifikasi sedang dimatikan
+
+    field_masalah = []
+    baris_pesan = []
+    for nama, (batas_bawah, batas_atas) in IDEAL_RANGES.items():
+        nilai = data.get(nama)
+        if nilai is None:
+            continue
+        if nilai < batas_bawah:
+            field_masalah.append(nama)
+            baris_pesan.append(f"• {nama} RENDAH: {nilai} (ideal {batas_bawah}-{batas_atas})")
+        elif nilai > batas_atas:
+            field_masalah.append(nama)
+            baris_pesan.append(f"• {nama} TINGGI: {nilai} (ideal {batas_bawah}-{batas_atas})")
+
+    if not field_masalah:
+        return  # Semua nilai normal, tidak perlu notifikasi
+
+    # Kunci cooldown = kombinasi field bermasalah, contoh: "ph,tds"
+    if not boleh_kirim_notif(','.join(sorted(field_masalah))):
+        return
+
+    pesan = "⚠️ <b>Peringatan HidroKu</b>\n\n" + "\n".join(baris_pesan)
+    kirim_telegram(pesan)
 
 
 # ==================== FUNGSI DATABASE HELPER ====================
@@ -373,7 +482,12 @@ def add_sensor_data():
     c.execute('SELECT * FROM sensor_data WHERE id = ?', (new_id,))
     row = c.fetchone()
     conn.close()
-    return jsonify({'status': 'success', 'data': sensor_to_dict(row)}), 201
+
+    hasil = sensor_to_dict(row)
+    # (Tahap 4) Kirim notifikasi Telegram jika ada nilai di luar rentang ideal
+    cek_sensor_dan_notif(hasil)
+
+    return jsonify({'status': 'success', 'data': hasil}), 201
 
 
 # Simulasi: buat data sensor random
@@ -404,6 +518,27 @@ def simulate_sensor():
     row = c.fetchone()
     conn.close()
     return jsonify({'status': 'simulated', 'data': sensor_to_dict(row)})
+
+
+# Tes kirim notifikasi Telegram (dipakai tombol "Tes Notifikasi" di dashboard)
+@app.route('/api/notif/test', methods=['POST'])
+def test_notifikasi_telegram():
+    # Anti-spam
+    if kena_rate_limit(request.remote_addr, RATE_LIMIT_PER_MINUTE):
+        return jsonify({'status': 'error', 'error': 'Terlalu banyak permintaan, coba lagi nanti'}), 429
+
+    if not telegram_aktif():
+        return jsonify({
+            'status': 'error',
+            'error': 'Telegram belum dikonfigurasi. Isi TELEGRAM_BOT_TOKEN dan '
+                     'TELEGRAM_CHAT_ID di file .env lalu restart server.'
+        }), 400
+
+    pesan = ("🔔 <b>Tes Notifikasi HidroKu</b>\n\n"
+             "Jika pesan ini diterima, berarti notifikasi Telegram sudah aktif. ✅")
+    if kirim_telegram(pesan):
+        return jsonify({'status': 'success', 'message': 'Notifikasi tes berhasil dikirim'})
+    return jsonify({'status': 'error', 'error': 'Gagal mengirim. Periksa bot token dan chat ID.'}), 502
 
 
 # --- TANAMAN ---

@@ -43,6 +43,7 @@ Semua data bisa dibaca/ditulis lewat JSON API (lihat bagian **Contoh Penggunaan*
 - `POST /api/sensor/simulate`      → simulasi data random
 - `GET  /api/plants`, `POST /api/plants`, `DELETE /api/plants/:id`
 - `GET  /api/schedules`, `POST /api/schedules/:id/toggle`
+- `POST /api/notif/test` → kirim pesan percobaan ke Telegram
 
 ### 🔒 Keamanan Dasar
 - **API key opsional**: `POST /api/sensor` bisa dikunci dengan header `X-API-Key` (diatur lewat `API_KEY` di `.env`).
@@ -50,6 +51,12 @@ Semua data bisa dibaca/ditulis lewat JSON API (lihat bagian **Contoh Penggunaan*
 - **Batas ukuran request** 1 MB, sehingga payload raksasa otomatis ditolak.
 
 > Ini proteksi dasar untuk pemakaian di **LAN rumah**. Untuk akses dari internet, tetap perlu **login + HTTPS** (lihat Tahap Deploy).
+
+### 📱 Notifikasi Telegram
+- Kirim peringatan otomatis ke HP saat pH/TDS/suhu/kelembaban/level air keluar dari rentang ideal.
+- Tombol **🔔 Tes Notifikasi** di dashboard untuk memastikan setup sudah benar.
+- **Anti-spam**: masalah yang sama hanya dikirim sekali per `NOTIF_COOLDOWN_MINUTES` menit.
+- Tanpa library tambahan (memakai modul bawaan Python).
 
 ---
 
@@ -125,8 +132,40 @@ Lalu buka `.env` dan sesuaikan. Isinya:
 | `DB_PATH` | `hidroponik.db` | Nama file database. |
 | `API_KEY` | *(kosong)* | Kunci rahasia IoT. Jika diisi, `POST /api/sensor` wajib kirim header `X-API-Key`. |
 | `RATE_LIMIT_PER_MINUTE` | `60` | Batas request data per menit untuk satu alamat IP (anti-spam). |
+| `TELEGRAM_BOT_TOKEN` | *(kosong)* | Token bot Telegram. Kosong = notifikasi mati. |
+| `TELEGRAM_CHAT_ID` | *(kosong)* | Chat ID tujuan notifikasi Telegram. |
+| `NOTIF_COOLDOWN_MINUTES` | `30` | Jeda minimal antar notifikasi untuk masalah yang sama (menit). |
 
 > File `.env` **tidak akan ikut ter-upload ke GitHub** (sudah diblokir lewat `.gitignore`), jadi aman untuk pengaturan pribadi.
+
+### Langkah 4: (Opsional) Aktifkan Notifikasi Telegram
+Supaya HP menerima peringatan otomatis saat pH/TDS/suhu keluar dari rentang ideal.
+
+**1. Buat bot Telegram**
+- Buka Telegram, cari **@BotFather** → kirim pesan `/newbot`
+- Ikuti instruksinya (isi nama & username bot)
+- BotFather akan memberi **token** seperti `123456789:AAHxxxxxxxxxxxxxxxx` → copy
+
+**2. Dapatkan Chat ID Anda**
+- Cari **@userinfobot** → kirim pesan apa saja
+- Bot membalas **Id** Anda, misalnya `987654321` → copy angka itu
+
+**3. Isi file `.env`**
+```bash
+cp .env.example .env   # kalau file .env belum ada
+```
+Lalu isi dua baris ini:
+```
+TELEGRAM_BOT_TOKEN=123456789:AAHxxxxxxxxxxxxxxxx
+TELEGRAM_CHAT_ID=987654321
+```
+
+**4. Tes**
+- Restart server (`Ctrl+C`, lalu `python app.py` lagi)
+- Buka dashboard → klik tombol **🔔 Tes Notifikasi** di kanan atas
+- Pesan tes harus masuk ke chat Telegram Anda
+
+> Notifikasi otomatis dikirim saat data sensor masuk lewat `POST /api/sensor` dan ada nilai di luar rentang **ideal** (`IDEAL_RANGES` di [app.py](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L77-L83)). Masalah yang sama hanya dikirim sekali per `NOTIF_COOLDOWN_MINUTES` menit agar tidak spam.
 
 ---
 
@@ -252,8 +291,8 @@ Hasil yang diharapkan (semua hijau):
 tests/test_app.py::test_halaman_utama_terbuka PASSED
 tests/test_app.py::test_sensor_terbaru_lengkap PASSED
 tests/test_app.py::test_kirim_sensor_diluar_rentang_ditolak PASSED
-... (total 16 test)
-============================== 16 passed in 2.6s ===============================
+... (total 26 test)
+============================== 26 passed in 9.35s ===============================
 ```
 
 > Test memakai **database sementara** di folder temp, jadi data asli di `hidroponik.db` **tidak akan terhapus/terganggu**.
@@ -277,19 +316,22 @@ tests/test_app.py::test_kirim_sensor_diluar_rentang_ditolak PASSED
 | # | Gejala | Penyebab | Solusi |
 |---|---|---|---|
 | **1** | `ModuleNotFoundError: No module named 'flask'` | Library belum diinstall | Jalankan `pip install -r requirements.txt`. Jika masih error: coba `pip3 install -r requirements.txt` atau buat virtual environment (lihat bagian **Cara Install**). |
-| **2** | `Address already in use :::5000` atau `Port 5000 is in use` | Ada program lain pakai port 5000 (atau server Flask lama belum mati) | Tutup terminal lama (Ctrl+C). Atau ubah `FLASK_PORT` di file `.env` (contoh `.env.example`), atau langsung di [app.py:467](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L467) → `PORT` jadi `5001`. |
+| **2** | `Address already in use :::5000` atau `Port 5000 is in use` | Ada program lain pakai port 5000 (atau server Flask lama belum mati) | Tutup terminal lama (Ctrl+C). Atau ubah `FLASK_PORT` di file `.env` (contoh `.env.example`), atau langsung di [app.py:664](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L664) → `PORT` jadi `5001`. |
 | **3** | Buka `http://IP:5000` dari HP **tidak bisa dibuka** | Firewall komputer / beda jaringan | Pastikan HP dan komputer **terhubung Wi-Fi yang SAMA**. Cek `ufw status` / firewall Linux → izinkan port 5000 (`sudo ufw allow 5000` sementara). Matikan VPN. |
 | **4** | Semua kartu sensor menampilkan **`--`** dan bertuliskan "Memuat..." | Frontend gagal memanggil API / DB kosong | Buka DevTools → Console (F12 di browser) untuk lihat error. Pastikan Flask server sedang berjalan. Jika DB kosong: restart server dengan `python app.py` (auto seed). |
 | **5** | **Grafik tidak muncul** (hanya tulisan judul) | CDN Chart.js tidak termuat (offline / diblokir internet / DNS) | Pastikan komputer punya akses internet (CDN Chart.js di-load dari jsdelivr). Jika offline permanen: download `chart.umd.min.js` secara lokal, taruh di `static/js/`, lalu ubah `<script src=...>` di [index.html:20](file:///home/memorygroups/Documents/trae_projects/hidro/templates/index.html#L20) menjadi file lokal. |
-| **6** | Setelah kirim data dari ESP32 → response **400 Bad Request** | Ada field yang salah (ph diluar 3-10, tds < 50, dst) | Lihat field `errors` di response JSON → perbaiki nilai sensor atau ubah rentang di konstanta `SENSOR_RANGES` [app.py:39-45](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L39-L45). |
+| **6** | Setelah kirim data dari ESP32 → response **400 Bad Request** | Ada field yang salah (ph diluar 3-10, tds < 50, dst) | Lihat field `errors` di response JSON → perbaiki nilai sensor atau ubah rentang di konstanta `SENSOR_RANGES` [app.py:66-72](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L66-L72). |
 | **7** | Tombol **Simulasi Data Sensor** diklik → toast **❌ Gagal simulasi** | Endpoint method salah atau error server | Pastikan server di-restart setelah edit app.py. Simulate harus pakai **POST** (bukan GET). |
-| **8** | `OperationalError: database is locked` (saat deploy gunicorn / banyak akses) | SQLite mode default tidak cocok untuk concurrency tinggi | **Sudah ditangani**: aplikasi otomatis mengaktifkan **WAL mode** di fungsi `get_db()` [app.py:56-64](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L56-L64). Jika masih muncul pada trafik sangat tinggi → pertimbangkan migrasi ke PostgreSQL. |
-| **9** | Menjalankan via `flask --app app run` → **data tanaman/jadwal kosong** | Karena init_db() dipindahkan ke blok `if __name__` (hindari DB lock worker) | Jalankan via `python app.py` (direkomendasikan). ATAU buka komentar `# init_db()` di [app.py:176](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L176). |
-| **10** | Data sensor tidak berubah walau ESP32 kirim tiap detik | **Auto refresh frontend 10 detik** / limit history 20 data terakhir | Ubah angka di `setInterval(loadSensorData, 10000)` [app.js:12](file:///home/memorygroups/Documents/trae_projects/hidro/static/js/app.js#L12) menjadi `3000` (3 detik) atau sesuai kebutuhan. |
-| **11** | Menambah jenis tanaman baru (misal "Umbi") tapi tidak opsi di select | HTML form + whitelist Python harus sinkron | Edit `<option value="Umbi">Umbi</option>` di [index.html:221-227](file:///home/memorygroups/Documents/trae_projects/hidro/templates/index.html#L221-L227) **DAN** tambahkan ke `VALID_PLANT_TYPES` di [app.py:34](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L34) + tambahkan emoji di `emojiMap` [app.js:375](file:///home/memorygroups/Documents/trae_projects/hidro/static/js/app.js#L375). |
+| **8** | `OperationalError: database is locked` (saat deploy gunicorn / banyak akses) | SQLite mode default tidak cocok untuk concurrency tinggi | **Sudah ditangani**: aplikasi otomatis mengaktifkan **WAL mode** di fungsi `get_db()` [app.py:215-223](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L215-L223). Jika masih muncul pada trafik sangat tinggi → pertimbangkan migrasi ke PostgreSQL. |
+| **9** | Menjalankan via `flask --app app run` → **data tanaman/jadwal kosong** | Karena init_db() dipindahkan ke blok `if __name__` (hindari DB lock worker) | Jalankan via `python app.py` (direkomendasikan). ATAU buka komentar `# init_db()` di [app.py:335](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L335). |
+| **10** | Data sensor tidak berubah walau ESP32 kirim tiap detik | **Auto refresh frontend 10 detik** / limit history 20 data terakhir | Ubah angka di `setInterval(loadSensorData, 10000)` [app.js:14](file:///home/memorygroups/Documents/trae_projects/hidro/static/js/app.js#L14) menjadi `3000` (3 detik) atau sesuai kebutuhan. |
+| **11** | Menambah jenis tanaman baru (misal "Umbi") tapi tidak opsi di select | HTML form + whitelist Python harus sinkron | Edit `<option value="Umbi">Umbi</option>` di [index.html:228-234](file:///home/memorygroups/Documents/trae_projects/hidro/templates/index.html#L228-L234) **DAN** tambahkan ke `VALID_PLANT_TYPES` di [app.py:61](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L61) + tambahkan emoji di `emojiMap` [app.js:394](file:///home/memorygroups/Documents/trae_projects/hidro/static/js/app.js#L394). |
 | **12** | Ingin reset semua data bersih (mulai dari nol) | Database sudah terisi banyak data percobaan | **Hapus file `hidroponik.db`** → restart server → database baru + seed awal dibuat ulang. |
 | **13** | Kirim data dari IoT → response **401 Unauthorized** | `API_KEY` diisi di `.env`, tapi header `X-API-Key` tidak dikirim atau salah | Kirim header `X-API-Key` dengan nilai persis sama seperti di `.env`. Atau kosongkan `API_KEY` untuk mematikan proteksi. |
 | **14** | Response **429 Too Many Requests** | Mengirim lebih dari batas request per menit (default 60) | Tunggu 1 menit, atau naikkan `RATE_LIMIT_PER_MINUTE` di `.env`. |
+| **15** | Klik **Tes Notifikasi** → muncul pesan *"Telegram belum dikonfigurasi"* | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` masih kosong di `.env` | Isi keduanya di `.env`, lalu **restart server** (perubahan `.env` baru terbaca setelah restart). |
+| **16** | Klik **Tes Notifikasi** → pesan *"Gagal mengirim"* | Token/chat ID salah, atau Anda belum pernah memulai chat dengan bot | Cek ulang token dari @BotFather & chat ID dari @userinfobot. Pastikan Anda sudah kirim `/start` ke bot tersebut. |
+| **17** | Setup Telegram benar tapi notifikasi tidak pernah masuk | Nilai sensor masih dalam rentang ideal, atau masih dalam masa cooldown | Notifikasi hanya dikirim bila ada nilai di luar `IDEAL_RANGES` [app.py](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L77-L83). Cek juga `NOTIF_COOLDOWN_MINUTES`. |
 
 ---
 

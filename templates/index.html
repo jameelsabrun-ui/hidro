@@ -60,6 +60,9 @@
                 <button class="btn btn-simulate" onclick="simulateSensor()">
                     🔄 Simulasi Data Sensor
                 </button>
+                <button class="btn btn-telegram" onclick="testNotifikasi()">
+                    🔔 Tes Notifikasi
+                </button>
                 <div class="status-indicator" id="system-status">
                     <span class="status-dot"></span>
                     <span>Sistem Aktif</span>
@@ -202,6 +205,10 @@
                 <div class="guide-card">
                     <h4>🔌 IoT Integration</h4>
                     <p>Website ini siap diintegrasikan dengan sensor IoT. Kirim data sensor ke endpoint <code>/api/sensor</code> dengan method POST.</p>
+                </div>
+                <div class="guide-card">
+                    <h4>🔔 Notifikasi Telegram</h4>
+                    <p>Dapatkan peringatan otomatis saat pH/TDS/suhu keluar dari rentang ideal. Isi <code>TELEGRAM_BOT_TOKEN</code> dan <code>TELEGRAM_CHAT_ID</code> di file <code>.env</code>, lalu tekan tombol <b>Tes Notifikasi</b> di kanan atas.</p>
                 </div>
             </div>
         </section>

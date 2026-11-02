@@ -195,6 +195,16 @@ body {
     transform: translateY(-2px);
 }
 
+.btn-telegram {
+    background: linear-gradient(135deg, #2196f3, #1565c0);
+    color: white;
+    box-shadow: 0 4px 15px rgba(21, 101, 192, 0.3);
+}
+
+.btn-telegram:hover {
+    transform: translateY(-2px);
+}
+
 .btn-danger {
     background: #ef5350;
     color: white;

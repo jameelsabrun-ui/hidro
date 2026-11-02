@@ -320,6 +320,25 @@ async function simulateSensor() {
 }
 
 
+// ===== TES NOTIFIKASI TELEGRAM =====
+// Mengirim pesan percobaan ke Telegram.
+// Perlu TELEGRAM_BOT_TOKEN & TELEGRAM_CHAT_ID diisi di file .env.
+async function testNotifikasi() {
+    try {
+        const res = await fetch('/api/notif/test', { method: 'POST' });
+        const json = await safeJson(res);
+        if (res.ok && json && json.status === 'success') {
+            showToast('✅ ' + (json.message || 'Notifikasi tes terkirim'));
+        } else {
+            showToast('⚠ ' + (json && json.error ? json.error : 'Gagal mengirim notifikasi'));
+        }
+    } catch (err) {
+        console.error(err);
+        showToast('❌ Tidak bisa menghubungi server');
+    }
+}
+
+
 // ===== TOAST (NOTIFIKASI SEMENTARA) =====
 function showToast(message) {
     const toast = document.createElement('div');
