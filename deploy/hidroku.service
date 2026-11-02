@@ -1,0 +1,45 @@
+# ==========================================================
+# Template service systemd untuk HidroKu (gunicorn)
+# ==========================================================
+# Cara pakai (di VPS, jalankan dengan sudo):
+#   1. Sesuaikan baris yang ditandai "GANTI ..." di bawah.
+#   2. Copy ke systemd:   sudo cp deploy/hidroku.service /etc/systemd/system/
+#   3. Muat ulang:        sudo systemctl daemon-reload
+#   4. Nyalakan:          sudo systemctl enable --now hidroku
+#   5. Cek status:        sudo systemctl status hidroku
+#   6. Lihat log:         sudo journalctl -u hidroku -f
+# ----------------------------------------------------------
+
+[Unit]
+Description=HidroKu - Dashboard Hidroponik (gunicorn)
+After=network.target
+
+[Service]
+# GANTI: user Linux yang menjalankan aplikasi (JANGAN pakai root)
+User=hidro
+Group=hidro
+
+# GANTI: folder tempat proyek berada di server
+WorkingDirectory=/home/hidro/hidroku
+
+# Baca variabel dari file .env (SECRET_KEY, LOGIN_*, API_KEY, dst).
+# File .env WAJIB ada, kalau tidak service akan gagal start.
+EnvironmentFile=/home/hidro/hidroku/.env
+
+# GANTI bila venv berada di lokasi lain.
+# Kalau tidak memakai venv, pakai: ExecStart=/usr/local/bin/gunicorn ...
+ExecStart=/home/hidro/hidroku/venv/bin/gunicorn \
+    --workers 2 \
+    --bind 127.0.0.1:8000 \
+    --preload \
+    --timeout 30 \
+    --access-logfile - \
+    --error-logfile - \
+    wsgi:app
+
+# Otomatis hidup lagi kalau aplikasi crash
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

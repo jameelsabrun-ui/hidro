@@ -1,10 +1,14 @@
-from flask import Flask, render_template, request, jsonify
+from flask import (Flask, render_template, request, jsonify,
+                   session, redirect, url_for)
+from werkzeug.middleware.proxy_fix import ProxyFix
 from datetime import datetime, date
 import sqlite3
 import random
 import os
 import time
 import json
+import hmac
+import secrets
 import urllib.request
 
 # Baca konfigurasi dari file .env (jika ada).
@@ -18,6 +22,12 @@ except ImportError:
 
 # ==================== KONFIGURASI ====================
 app = Flask(__name__)
+
+# Di belakang Nginx (saat deploy), IP asli pengunjung dikirim lewat header
+# X-Forwarded-For. ProxyFix membuat request.remote_addr berisi IP asli itu,
+# supaya rate limiting dihitung per pengunjung — bukan per proxy (Nginx).
+# Aman karena gunicorn hanya mendengarkan di 127.0.0.1 (tidak bisa diakses langsung).
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 # --- Pengaturan yang bisa diubah lewat file .env (lihat .env.example) ---
 HOST = os.environ.get('FLASK_HOST', '0.0.0.0')       # 0.0.0.0 = bisa diakses dari LAN
@@ -55,6 +65,18 @@ TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
 # Jeda minimal antar notifikasi untuk masalah yang sama (dalam MENIT),
 # supaya HP tidak dibanjiri pesan berulang.
 NOTIF_COOLDOWN_MINUTES = int(os.environ.get('NOTIF_COOLDOWN_MINUTES', '30'))
+
+# --- Pengaturan login (Tahap 5) ---
+# Login AKTIF hanya jika USERNAME dan PASSWORD keduanya diisi di .env.
+# Kalau salah satu (atau keduanya) kosong -> dashboard terbuka seperti biasa.
+LOGIN_USERNAME = os.environ.get('LOGIN_USERNAME', '')
+LOGIN_PASSWORD = os.environ.get('LOGIN_PASSWORD', '')
+
+# Kunci rahasia untuk menandatangani cookie sesi login.
+# Kalau dikosongkan, dibuat otomatis saat server mulai — artinya sesi login
+# akan hilang setiap server di-restart (user perlu login ulang).
+SECRET_KEY = os.environ.get('SECRET_KEY', '')
+app.secret_key = SECRET_KEY or secrets.token_hex(32)
 
 # Daftar nilai yang DIWOJALKAN (whitelist) untuk validasi input.
 # (ERR-4, VAL-3, VAL-4) menghindari user mengetik string sembarangan.
@@ -208,6 +230,38 @@ def cek_sensor_dan_notif(data):
 
     pesan = "⚠️ <b>Peringatan HidroKu</b>\n\n" + "\n".join(baris_pesan)
     kirim_telegram(pesan)
+
+
+# ==================== LOGIN SEDERHANA (Tahap 5) ====================
+
+def login_aktif():
+    """True jika username & password login sudah diisi di .env."""
+    return bool(LOGIN_USERNAME and LOGIN_PASSWORD)
+
+
+@app.before_request
+def cek_login():
+    """
+    Penjaga pintu: memastikan halaman & API hanya bisa diakses setelah login.
+    Hanya aktif kalau login diaktifkan (LOGIN_USERNAME & LOGIN_PASSWORD diisi).
+    """
+    if not login_aktif():
+        return None  # Fitur login dimatikan -> semua bebas diakses
+
+    # Endpoint yang tetap bebas diakses tanpa login:
+    # - login/logout & file statis (CSS/JS)
+    # - add_sensor_data: dipakai alat IoT, dilindungi API key (bukan sesi)
+    endpoint_bebas = {'login', 'logout', 'static', 'add_sensor_data'}
+    if request.endpoint in endpoint_bebas:
+        return None
+
+    if session.get('logged_in'):
+        return None  # Sudah login -> lanjut
+
+    # Belum login: API balas JSON 401, halaman web dialihkan ke /login
+    if request.path.startswith('/api/'):
+        return jsonify({'status': 'error', 'error': 'Silakan login terlebih dahulu'}), 401
+    return redirect(url_for('login'))
 
 
 # ==================== FUNGSI DATABASE HELPER ====================
@@ -405,7 +459,42 @@ def schedule_to_dict(row):
 
 @app.route('/')
 def dashboard():
-    return render_template('index.html')
+    # login_aktif dikirim ke template agar tombol "Keluar" bisa disembunyikan
+    # saat fitur login dimatikan.
+    return render_template('index.html', login_aktif=login_aktif())
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    # Kalau fitur login dimatikan, halaman login tidak perlu -> langsung ke dashboard
+    if not login_aktif():
+        return redirect(url_for('dashboard'))
+
+    error = None
+    if request.method == 'POST':
+        username = (request.form.get('username') or '').strip()
+        password = request.form.get('password') or ''
+
+        # hmac.compare_digest: bandingkan tanpa "bocor" waktu (aman dari timing attack).
+        # Di-encode ke bytes agar aman walau ada karakter non-ASCII.
+        user_ok = hmac.compare_digest(username.encode('utf-8'),
+                                      LOGIN_USERNAME.encode('utf-8'))
+        pass_ok = hmac.compare_digest(password.encode('utf-8'),
+                                      LOGIN_PASSWORD.encode('utf-8'))
+
+        if user_ok and pass_ok:
+            session['logged_in'] = True       # tandai sudah masuk
+            session['username'] = username
+            return redirect(url_for('dashboard'))
+        error = 'Username atau password salah.'
+
+    return render_template('login.html', error=error)
+
+
+@app.route('/logout')
+def logout():
+    session.clear()  # hapus sesi login
+    return redirect(url_for('login'))
 
 
 # ==================== API ENDPOINTS (DATA INTERAKTIF) ====================
@@ -661,4 +750,10 @@ if __name__ == '__main__':
         print(f"[PERINGATAN] Gagal init database: {e}")
 
     # Host, port, dan debug diambil dari konfigurasi (.env / nilai default).
+    # Peringatan: kalau login aktif tapi SECRET_KEY kosong, sesi login akan
+    # hilang setiap server di-restart.
+    if login_aktif() and not SECRET_KEY:
+        print("[PERINGATAN] SECRET_KEY kosong: sesi login akan hilang tiap restart. "
+              "Isi SECRET_KEY di file .env.")
+
     app.run(debug=DEBUG, host=HOST, port=PORT)

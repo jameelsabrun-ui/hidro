@@ -216,6 +216,17 @@ body {
     background: #c62828;
 }
 
+.btn-logout {
+    background: white;
+    color: #c62828;
+    border: 2px solid #ffcdd2;
+}
+
+.btn-logout:hover {
+    background: #ffebee;
+    transform: translateY(-2px);
+}
+
 
 /* ------------ SENSOR CARD ------------ */
 .sensor-grid {
@@ -779,4 +790,98 @@ body {
     .summary-row {
         grid-template-columns: repeat(2, 1fr);
     }
+}
+
+
+/* ============== HALAMAN LOGIN ============== */
+/* body.login-body menimpa layout body utama (yang memakai flex sidebar). */
+.login-body {
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+}
+
+.login-card {
+    background: white;
+    width: 100%;
+    max-width: 400px;
+    padding: 45px 40px;
+    border-radius: 22px;
+    text-align: center;
+    box-shadow: 0 20px 60px rgba(27, 94, 32, 0.15);
+    animation: fadeIn 0.5s ease;
+}
+
+.login-logo {
+    font-size: 60px;
+    margin-bottom: 8px;
+}
+
+.login-card h1 {
+    font-size: 30px;
+    color: #1b5e20;
+    letter-spacing: 1px;
+}
+
+.login-subtitle {
+    font-size: 14px;
+    color: #718096;
+    margin: 8px 0 25px;
+}
+
+.login-card label {
+    display: block;
+    text-align: left;
+    font-size: 14px;
+    font-weight: 600;
+    color: #4a5568;
+    margin-bottom: 8px;
+    margin-top: 18px;
+}
+
+.login-card input {
+    width: 100%;
+    padding: 13px 15px;
+    border: 2px solid #e2e8f0;
+    border-radius: 10px;
+    font-size: 15px;
+    font-family: inherit;
+    transition: all 0.3s;
+}
+
+.login-card input:focus {
+    outline: none;
+    border-color: #43a047;
+    box-shadow: 0 0 0 3px rgba(67, 160, 71, 0.15);
+}
+
+.login-card .btn-primary {
+    width: 100%;
+    justify-content: center;
+    margin-top: 28px;
+    padding: 14px;
+    font-size: 15px;
+}
+
+.login-error {
+    background: #ffebee;
+    color: #c62828;
+    padding: 12px 15px;
+    border-radius: 10px;
+    font-size: 14px;
+    margin-bottom: 10px;
+}
+
+.login-hint {
+    font-size: 12px;
+    color: #a0aec0;
+    margin-top: 25px;
+    line-height: 1.6;
+}
+
+.login-hint code {
+    background: #e8f5e9;
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: #1b5e20;
 }

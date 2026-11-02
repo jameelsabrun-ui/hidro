@@ -52,6 +52,12 @@ Semua data bisa dibaca/ditulis lewat JSON API (lihat bagian **Contoh Penggunaan*
 
 > Ini proteksi dasar untuk pemakaian di **LAN rumah**. Untuk akses dari internet, tetap perlu **login + HTTPS** (lihat Tahap Deploy).
 
+### 🔐 Login Dashboard
+- **Halaman login** sederhana (username + password) untuk membatasi siapa yang bisa membuka dashboard.
+- Login **aktif hanya jika** `LOGIN_USERNAME` & `LOGIN_PASSWORD` diisi di `.env` (kalau kosong, dashboard terbuka seperti biasa).
+- Sesi login disimpan sebagai **cookie** yang ditandatangani `SECRET_KEY`, dan tombol **🚪 Keluar** muncul di kanan atas saat login aktif.
+- Endpoint IoT `POST /api/sensor` tetap bebas dari login (dilindungi API key), sehingga ESP32 tidak terganggu.
+
 ### 📱 Notifikasi Telegram
 - Kirim peringatan otomatis ke HP saat pH/TDS/suhu/kelembaban/level air keluar dari rentang ideal.
 - Tombol **🔔 Tes Notifikasi** di dashboard untuk memastikan setup sudah benar.
@@ -70,12 +76,17 @@ hidro/
 ├── .env                        # Konfigurasi pribadi (copy dari .env.example, tidak ikut GitHub)
 ├── hidroponik.db               # (Auto-generated) File database SQLite
 ├── templates/
-│   └── index.html              # Halaman web utama (HTML)
+│   ├── index.html              # Halaman web utama (HTML)
+│   └── login.html              # Halaman login (username + password)
 ├── static/
 │   ├── css/
 │   │   └── style.css           # Styling, warna, layout (tampilan cantik)
 │   └── js/
 │       └── app.js              # Interaksi user, grafik, panggil API
+├── wsgi.py                     # Entry point server produksi (gunicorn)
+├── deploy/
+│   ├── hidroku.service         # Template service systemd (auto-start di server)
+│   └── nginx.conf              # Template reverse proxy Nginx
 └── tests/
     └── test_app.py             # Test otomatis dengan pytest
 ```
@@ -135,6 +146,9 @@ Lalu buka `.env` dan sesuaikan. Isinya:
 | `TELEGRAM_BOT_TOKEN` | *(kosong)* | Token bot Telegram. Kosong = notifikasi mati. |
 | `TELEGRAM_CHAT_ID` | *(kosong)* | Chat ID tujuan notifikasi Telegram. |
 | `NOTIF_COOLDOWN_MINUTES` | `30` | Jeda minimal antar notifikasi untuk masalah yang sama (menit). |
+| `LOGIN_USERNAME` | *(kosong)* | Username login dashboard. Login aktif hanya jika ini **dan** `LOGIN_PASSWORD` diisi. |
+| `LOGIN_PASSWORD` | *(kosong)* | Password login dashboard. |
+| `SECRET_KEY` | *(kosong)* | Kunci penanda-tangan cookie sesi login. Bila kosong, dibuat acak (sesi hilang saat restart). |
 
 > File `.env` **tidak akan ikut ter-upload ke GitHub** (sudah diblokir lewat `.gitignore`), jadi aman untuk pengaturan pribadi.
 
@@ -165,7 +179,35 @@ TELEGRAM_CHAT_ID=987654321
 - Buka dashboard → klik tombol **🔔 Tes Notifikasi** di kanan atas
 - Pesan tes harus masuk ke chat Telegram Anda
 
-> Notifikasi otomatis dikirim saat data sensor masuk lewat `POST /api/sensor` dan ada nilai di luar rentang **ideal** (`IDEAL_RANGES` di [app.py](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L77-L83)). Masalah yang sama hanya dikirim sekali per `NOTIF_COOLDOWN_MINUTES` menit agar tidak spam.
+> Notifikasi otomatis dikirim saat data sensor masuk lewat `POST /api/sensor` dan ada nilai di luar rentang **ideal** (`IDEAL_RANGES` di [app.py](file:///home/memorygroups/Documents/trae_projects/hidro/app.py)). Masalah yang sama hanya dikirim sekali per `NOTIF_COOLDOWN_MINUTES` menit agar tidak spam.
+
+### Langkah 5: (Opsional) Aktifkan Login
+Supaya dashboard hanya bisa dibuka setelah memasukkan username & password.
+
+**1. Isi file `.env`**
+```bash
+cp .env.example .env   # kalau file .env belum ada
+```
+Lalu isi tiga baris ini (username & password bebas, pilih yang unik):
+```
+LOGIN_USERNAME=petani
+LOGIN_PASSWORD=passwordku123
+SECRET_KEY=ganti-dengan-string-acak-panjang
+```
+
+> Buat `SECRET_KEY` acak dengan perintah:
+> ```bash
+> python -c "import secrets; print(secrets.token_hex(32))"
+> ```
+
+**2. Restart server** (`Ctrl+C`, lalu `python app.py` lagi).
+
+**3. Coba login**
+- Buka http://localhost:5000 → otomatis diarahkan ke halaman login
+- Masuk dengan `LOGIN_USERNAME` & `LOGIN_PASSWORD` di atas
+- Setelah masuk, muncul tombol **🚪 Keluar** di kanan atas
+
+> Kalau `LOGIN_USERNAME` atau `LOGIN_PASSWORD` dikosongkan, fitur login otomatis **mati** dan dashboard kembali terbuka tanpa login.
 
 ---
 
@@ -189,7 +231,7 @@ Press CTRL+C to quit
 - **Di komputer yang sama**:  http://127.0.0.1:5000  atau  http://localhost:5000
 - **Di HP / perangkat lain (Wi-Fi sama)**:  http://IP_KOMPUTER_ANDA:5000  (contoh `http://192.168.1.10:5000`)
 
-**CATATAN KEAMANAN**: Server berjalan di `0.0.0.0` = bisa diakses perangkat lain di jaringan LAN yang sama. **JANGAN buka port 5000 ke internet** (port forwarding router) sebelum menambahkan sistem login dan autentikasi API.
+**CATATAN KEAMANAN**: Server berjalan di `0.0.0.0` = bisa diakses perangkat lain di jaringan LAN yang sama. **JANGAN buka port 5000 ke internet** (port forwarding router). Untuk pemakaian pribadi, aktifkan **login** (Langkah 5 di atas) dan **API key** agar lebih aman.
 
 ### Matikan server
 Tekan `Ctrl + C` di terminal.
@@ -291,8 +333,8 @@ Hasil yang diharapkan (semua hijau):
 tests/test_app.py::test_halaman_utama_terbuka PASSED
 tests/test_app.py::test_sensor_terbaru_lengkap PASSED
 tests/test_app.py::test_kirim_sensor_diluar_rentang_ditolak PASSED
-... (total 26 test)
-============================== 26 passed in 9.35s ===============================
+... (total 35 test)
+============================== 35 passed in 10.77s ==============================
 ```
 
 > Test memakai **database sementara** di folder temp, jadi data asli di `hidroponik.db` **tidak akan terhapus/terganggu**.
@@ -308,6 +350,92 @@ tests/test_app.py::test_kirim_sensor_diluar_rentang_ditolak PASSED
 | 6 | Tunggu 10-15 detik di halaman Dashboard | Data sensor auto refresh tanpa reload halaman |
 | 7 | Buka di browser HP (pada Wi-Fi yang sama) → `http://IP:5000` | Tampilan responsif menyesuaikan layar HP |
 | 8 | Send POST `/api/sensor` dengan `ph=15` (via curl) | Response status **400** (ditolak — validasi bekerja) |
+| 9 | (Jika login aktif) Buka `/` di jendela Incognito | Dialihkan ke halaman login; setelah isi username & password → masuk ke dashboard |
+
+---
+
+## ☁️ Cara Deploy (VPS + Nginx + HTTPS)
+
+Panduan ini menaruh HidroKu di **VPS** (Ubuntu/Debian) supaya bisa diakses dari internet dengan aman lewat **HTTPS**. Contoh memakai user `hidro`, folder `/home/hidro/hidroku`, dan domain `hidroku.example.com` — **ganti sesuai punyamu**.
+
+> Sebelum mulai: pastikan repo sudah di-push ke GitHub, dan kamu punya **VPS** + **domain** yang **A record**-nya sudah diarahkan ke IP VPS.
+
+### Langkah 1: Pasang kebutuhan di VPS
+```bash
+sudo apt update
+sudo apt install -y python3-venv nginx git
+```
+
+### Langkah 2: Ambil kode & pasang library
+```bash
+git clone https://github.com/jameelsabrun-ui/hidro.git
+cd hidro
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+### Langkah 3: Buat file `.env` untuk produksi
+```bash
+cp .env.example .env
+nano .env
+```
+Isi minimal (**WAJIB** demi keamanan karena terbuka ke internet):
+```
+FLASK_DEBUG=0
+SECRET_KEY=<hasil: python -c "import secrets; print(secrets.token_hex(32))">
+LOGIN_USERNAME=petani
+LOGIN_PASSWORD=<password kuat>
+API_KEY=<kunci acak>
+```
+
+### Langkah 4: Uji dulu dengan gunicorn (manual)
+```bash
+venv/bin/gunicorn --workers 2 --bind 127.0.0.1:8000 --preload wsgi:app
+```
+Pastikan berjalan (tanpa error), lalu tekan `Ctrl+C` untuk berhenti.
+
+### Langkah 5: Jalankan otomatis lewat systemd
+```bash
+sudo cp deploy/hidroku.service /etc/systemd/system/
+sudo nano /etc/systemd/system/hidroku.service   # sesuaikan User & path
+sudo systemctl daemon-reload
+sudo systemctl enable --now hidroku
+sudo systemctl status hidroku                    # harus "active (running)"
+```
+
+### Langkah 6: Pasang Nginx (reverse proxy)
+```bash
+sudo cp deploy/nginx.conf /etc/nginx/sites-available/hidroku
+sudo nano /etc/nginx/sites-available/hidroku     # ganti server_name & path
+sudo ln -s /etc/nginx/sites-available/hidroku /etc/nginx/sites-enabled/
+sudo nginx -t                                    # cek konfigurasi
+sudo systemctl reload nginx
+```
+
+### Langkah 7: Pasang HTTPS gratis (Let's Encrypt)
+```bash
+sudo apt install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d hidroku.example.com
+```
+Certbot otomatis mengubah Nginx ke HTTPS (port 443) dan mengatur perpanjangan sertifikat.
+
+### Langkah 8: Aktifkan firewall
+```bash
+sudo ufw allow 'Nginx Full'
+sudo ufw allow OpenSSH
+sudo ufw enable
+```
+
+### Update aplikasi setelah ada perubahan kode
+```bash
+cd ~/hidroku
+git pull
+source venv/bin/activate && pip install -r requirements.txt
+sudo systemctl restart hidroku
+```
+
+> ⚠️ **Backup database**: `hidroponik.db` disimpan sebagai file di VPS. Backup berkala dengan `cp hidroponik.db hidroponik.db.bak`.
 
 ---
 
@@ -316,22 +444,27 @@ tests/test_app.py::test_kirim_sensor_diluar_rentang_ditolak PASSED
 | # | Gejala | Penyebab | Solusi |
 |---|---|---|---|
 | **1** | `ModuleNotFoundError: No module named 'flask'` | Library belum diinstall | Jalankan `pip install -r requirements.txt`. Jika masih error: coba `pip3 install -r requirements.txt` atau buat virtual environment (lihat bagian **Cara Install**). |
-| **2** | `Address already in use :::5000` atau `Port 5000 is in use` | Ada program lain pakai port 5000 (atau server Flask lama belum mati) | Tutup terminal lama (Ctrl+C). Atau ubah `FLASK_PORT` di file `.env` (contoh `.env.example`), atau langsung di [app.py:664](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L664) → `PORT` jadi `5001`. |
+| **2** | `Address already in use :::5000` atau `Port 5000 is in use` | Ada program lain pakai port 5000 (atau server Flask lama belum mati) | Tutup terminal lama (Ctrl+C). Atau ubah `FLASK_PORT` di file `.env` (contoh `.env.example`), atau langsung di [app.py:749](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L749) → `PORT` jadi `5001`. |
 | **3** | Buka `http://IP:5000` dari HP **tidak bisa dibuka** | Firewall komputer / beda jaringan | Pastikan HP dan komputer **terhubung Wi-Fi yang SAMA**. Cek `ufw status` / firewall Linux → izinkan port 5000 (`sudo ufw allow 5000` sementara). Matikan VPN. |
 | **4** | Semua kartu sensor menampilkan **`--`** dan bertuliskan "Memuat..." | Frontend gagal memanggil API / DB kosong | Buka DevTools → Console (F12 di browser) untuk lihat error. Pastikan Flask server sedang berjalan. Jika DB kosong: restart server dengan `python app.py` (auto seed). |
 | **5** | **Grafik tidak muncul** (hanya tulisan judul) | CDN Chart.js tidak termuat (offline / diblokir internet / DNS) | Pastikan komputer punya akses internet (CDN Chart.js di-load dari jsdelivr). Jika offline permanen: download `chart.umd.min.js` secara lokal, taruh di `static/js/`, lalu ubah `<script src=...>` di [index.html:20](file:///home/memorygroups/Documents/trae_projects/hidro/templates/index.html#L20) menjadi file lokal. |
-| **6** | Setelah kirim data dari ESP32 → response **400 Bad Request** | Ada field yang salah (ph diluar 3-10, tds < 50, dst) | Lihat field `errors` di response JSON → perbaiki nilai sensor atau ubah rentang di konstanta `SENSOR_RANGES` [app.py:66-72](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L66-L72). |
+| **6** | Setelah kirim data dari ESP32 → response **400 Bad Request** | Ada field yang salah (ph diluar 3-10, tds < 50, dst) | Lihat field `errors` di response JSON → perbaiki nilai sensor atau ubah rentang di konstanta `SENSOR_RANGES` [app.py:81-87](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L81-L87). |
 | **7** | Tombol **Simulasi Data Sensor** diklik → toast **❌ Gagal simulasi** | Endpoint method salah atau error server | Pastikan server di-restart setelah edit app.py. Simulate harus pakai **POST** (bukan GET). |
-| **8** | `OperationalError: database is locked` (saat deploy gunicorn / banyak akses) | SQLite mode default tidak cocok untuk concurrency tinggi | **Sudah ditangani**: aplikasi otomatis mengaktifkan **WAL mode** di fungsi `get_db()` [app.py:215-223](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L215-L223). Jika masih muncul pada trafik sangat tinggi → pertimbangkan migrasi ke PostgreSQL. |
-| **9** | Menjalankan via `flask --app app run` → **data tanaman/jadwal kosong** | Karena init_db() dipindahkan ke blok `if __name__` (hindari DB lock worker) | Jalankan via `python app.py` (direkomendasikan). ATAU buka komentar `# init_db()` di [app.py:335](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L335). |
+| **8** | `OperationalError: database is locked` (saat deploy gunicorn / banyak akses) | SQLite mode default tidak cocok untuk concurrency tinggi | **Sudah ditangani**: aplikasi otomatis mengaktifkan **WAL mode** di fungsi `get_db()` [app.py:262-270](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L262-L270). Jika masih muncul pada trafik sangat tinggi → pertimbangkan migrasi ke PostgreSQL. |
+| **9** | Menjalankan via `flask --app app run` → **data tanaman/jadwal kosong** | Karena init_db() dipindahkan ke blok `if __name__` (hindari DB lock worker) | Jalankan via `python app.py` (direkomendasikan). ATAU buka komentar `# init_db()` di [app.py:382](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L382). |
 | **10** | Data sensor tidak berubah walau ESP32 kirim tiap detik | **Auto refresh frontend 10 detik** / limit history 20 data terakhir | Ubah angka di `setInterval(loadSensorData, 10000)` [app.js:14](file:///home/memorygroups/Documents/trae_projects/hidro/static/js/app.js#L14) menjadi `3000` (3 detik) atau sesuai kebutuhan. |
-| **11** | Menambah jenis tanaman baru (misal "Umbi") tapi tidak opsi di select | HTML form + whitelist Python harus sinkron | Edit `<option value="Umbi">Umbi</option>` di [index.html:228-234](file:///home/memorygroups/Documents/trae_projects/hidro/templates/index.html#L228-L234) **DAN** tambahkan ke `VALID_PLANT_TYPES` di [app.py:61](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L61) + tambahkan emoji di `emojiMap` [app.js:394](file:///home/memorygroups/Documents/trae_projects/hidro/static/js/app.js#L394). |
+| **11** | Menambah jenis tanaman baru (misal "Umbi") tapi tidak opsi di select | HTML form + whitelist Python harus sinkron | Edit `<option value="Umbi">Umbi</option>` di [index.html:233-239](file:///home/memorygroups/Documents/trae_projects/hidro/templates/index.html#L233-L239) **DAN** tambahkan ke `VALID_PLANT_TYPES` di [app.py:76](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L76) + tambahkan emoji di `emojiMap` [app.js:394](file:///home/memorygroups/Documents/trae_projects/hidro/static/js/app.js#L394). |
 | **12** | Ingin reset semua data bersih (mulai dari nol) | Database sudah terisi banyak data percobaan | **Hapus file `hidroponik.db`** → restart server → database baru + seed awal dibuat ulang. |
 | **13** | Kirim data dari IoT → response **401 Unauthorized** | `API_KEY` diisi di `.env`, tapi header `X-API-Key` tidak dikirim atau salah | Kirim header `X-API-Key` dengan nilai persis sama seperti di `.env`. Atau kosongkan `API_KEY` untuk mematikan proteksi. |
 | **14** | Response **429 Too Many Requests** | Mengirim lebih dari batas request per menit (default 60) | Tunggu 1 menit, atau naikkan `RATE_LIMIT_PER_MINUTE` di `.env`. |
 | **15** | Klik **Tes Notifikasi** → muncul pesan *"Telegram belum dikonfigurasi"* | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` masih kosong di `.env` | Isi keduanya di `.env`, lalu **restart server** (perubahan `.env` baru terbaca setelah restart). |
 | **16** | Klik **Tes Notifikasi** → pesan *"Gagal mengirim"* | Token/chat ID salah, atau Anda belum pernah memulai chat dengan bot | Cek ulang token dari @BotFather & chat ID dari @userinfobot. Pastikan Anda sudah kirim `/start` ke bot tersebut. |
-| **17** | Setup Telegram benar tapi notifikasi tidak pernah masuk | Nilai sensor masih dalam rentang ideal, atau masih dalam masa cooldown | Notifikasi hanya dikirim bila ada nilai di luar `IDEAL_RANGES` [app.py](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L77-L83). Cek juga `NOTIF_COOLDOWN_MINUTES`. |
+| **17** | Setup Telegram benar tapi notifikasi tidak pernah masuk | Nilai sensor masih dalam rentang ideal, atau masih dalam masa cooldown | Notifikasi hanya dikirim bila ada nilai di luar `IDEAL_RANGES` [app.py](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L92-L98). Cek juga `NOTIF_COOLDOWN_MINUTES`. |
+| **18** | Dashboard **selalu minta login** padahal ingin terbuka bebas | `LOGIN_USERNAME`/`LOGIN_PASSWORD` terisi di `.env` | Kosongkan keduanya (atau salah satunya) di `.env`, lalu restart server. Login aktif hanya jika dua-duanya diisi. |
+| **19** | Sudah isi `.env` tapi **halaman login tidak muncul** | Server belum di-restart, atau salah satu dari username/password masih kosong | Pastikan `LOGIN_USERNAME` **dan** `LOGIN_PASSWORD` terisi → restart `python app.py` (perubahan `.env` baru terbaca setelah restart). |
+| **20** | Setelah login, tiap kali server di-restart **harus login ulang** | `SECRET_KEY` kosong, jadi kunci cookie dibuat acak ulang tiap start | Isi `SECRET_KEY` tetap di `.env` ([Langkah 5](#langkah-5-opsional-aktifkan-login)). |
+| **21** | Setelah deploy, situs menampilkan **502 Bad Gateway** | gunicorn tidak berjalan, atau `proxy_pass` di Nginx tidak sama dengan alamat gunicorn | Cek `sudo systemctl status hidroku` dan `sudo journalctl -u hidroku -f`. Pastikan gunicorn di `127.0.0.1:8000` sama seperti `proxy_pass` di [nginx.conf](file:///home/memorygroups/Documents/trae_projects/hidro/deploy/nginx.conf). |
+| **22** | **HTTPS gagal** / sertifikat tidak valid | Domain belum mengarah ke IP VPS, atau Certbot belum dijalankan | Pastikan A record domain → IP VPS (tunggu propagasi DNS), lalu jalankan `sudo certbot --nginx -d domainmu`. |
 
 ---
 
@@ -350,4 +483,6 @@ tests/test_app.py::test_kirim_sensor_diluar_rentang_ditolak PASSED
 > 2. Pasang semua sensor ke ESP32.
 > 3. Kirim data tiap 5 menit ke `POST /api/sensor`.
 > 4. Tambahkan endpoint `POST /api/pompa` + relay untuk ON/OFF pompa dari dashboard.
-> 5. Tambahkan notifikasi Telegram jika pH/TDS di luar batas aman.
+> 5. ✅ ~~Tambahkan notifikasi Telegram jika pH/TDS di luar batas aman.~~ (selesai — Tahap 4)
+> 6. ✅ ~~Tambahkan halaman login.~~ (selesai — Tahap 5)
+> 7. ✅ ~~Deploy ke server + pasang HTTPS (Nginx).~~ (berkas & panduan deploy sudah siap — lihat bagian **Cara Deploy**)

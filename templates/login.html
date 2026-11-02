@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - HidroKu</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="login-body">
+
+    <div class="login-card">
+        <div class="login-logo">🌱</div>
+        <h1>HidroKu</h1>
+        <p class="login-subtitle">Masuk untuk memantau kebun hidroponikmu</p>
+
+        <!-- Pesan error kalau username/password salah (otomatis di-escape oleh Jinja) -->
+        {% if error %}
+        <div class="login-error">⚠️ {{ error }}</div>
+        {% endif %}
+
+        <form method="POST" action="{{ url_for('login') }}">
+            <label for="username">Username</label>
+            <input type="text" id="username" name="username"
+                   placeholder="Masukkan username" required autofocus>
+
+            <label for="password">Password</label>
+            <input type="password" id="password" name="password"
+                   placeholder="Masukkan password" required>
+
+            <button type="submit" class="btn btn-primary">🔓 Masuk</button>
+        </form>
+
+        <p class="login-hint">
+            Diatur lewat <code>LOGIN_USERNAME</code> &amp; <code>LOGIN_PASSWORD</code>
+            di file <code>.env</code>.
+        </p>
+    </div>
+
+</body>
+</html>

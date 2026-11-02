@@ -2,5 +2,8 @@
 Flask>=3.0.0
 python-dotenv>=1.0.0
 
+# Server produksi (dipakai saat deploy di VPS, bukan saat belajar di lokal)
+gunicorn>=21.0.0
+
 # Untuk menjalankan test (opsional, hanya saat development)
 pytest>=7.0.0

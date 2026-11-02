@@ -25,9 +25,13 @@ def client():
     api_key_asli = app_module.API_KEY
     token_asli = app_module.TELEGRAM_BOT_TOKEN
     chat_id_asli = app_module.TELEGRAM_CHAT_ID
+    login_user_asli = app_module.LOGIN_USERNAME
+    login_pass_asli = app_module.LOGIN_PASSWORD
     app_module.API_KEY = ''               # default test: proteksi API key dimatikan
     app_module.TELEGRAM_BOT_TOKEN = ''    # default test: notifikasi Telegram dimatikan
     app_module.TELEGRAM_CHAT_ID = ''
+    app_module.LOGIN_USERNAME = ''        # default test: fitur login dimatikan
+    app_module.LOGIN_PASSWORD = ''
     app_module._riwayat_request.clear()   # reset catatan rate limit
     app_module._terakhir_notif.clear()    # reset catatan cooldown notifikasi
 
@@ -46,6 +50,8 @@ def client():
     app_module.API_KEY = api_key_asli
     app_module.TELEGRAM_BOT_TOKEN = token_asli
     app_module.TELEGRAM_CHAT_ID = chat_id_asli
+    app_module.LOGIN_USERNAME = login_user_asli
+    app_module.LOGIN_PASSWORD = login_pass_asli
     app_module._riwayat_request.clear()
     app_module._terakhir_notif.clear()
     for path in (tmp.name, tmp.name + '-wal', tmp.name + '-shm'):
@@ -271,3 +277,84 @@ def test_endpoint_tes_notif_tolak_saat_belum_dikonfigurasi(client):
     r = client.post('/api/notif/test')
     assert r.status_code == 400
     assert 'belum dikonfigurasi' in r.get_json()['error'].lower()
+
+
+# ==================== TEST LOGIN (Tahap 5) ====================
+
+def test_login_nonaktif_jika_kosong(client):
+    """Tanpa LOGIN_USERNAME/PASSWORD, dashboard langsung terbuka tanpa login."""
+    assert app_module.login_aktif() is False
+    assert client.get('/').status_code == 200
+
+
+def test_dashboard_dialihkan_ke_login_saat_aktif(client):
+    """Kalau login aktif & belum masuk, halaman utama dialihkan ke /login."""
+    app_module.LOGIN_USERNAME = 'admin'
+    app_module.LOGIN_PASSWORD = 'rahasia123'
+    r = client.get('/')
+    assert r.status_code == 302
+    assert '/login' in r.headers['Location']
+
+
+def test_halaman_login_terbuka(client):
+    """GET /login mengembalikan halaman dengan form password."""
+    app_module.LOGIN_USERNAME = 'admin'
+    app_module.LOGIN_PASSWORD = 'rahasia123'
+    r = client.get('/login')
+    assert r.status_code == 200
+    assert b'password' in r.data.lower()
+
+
+def test_login_berhasil_lalu_bisa_masuk_dashboard(client):
+    """Login dengan data benar -> bisa mengakses dashboard."""
+    app_module.LOGIN_USERNAME = 'admin'
+    app_module.LOGIN_PASSWORD = 'rahasia123'
+    r = client.post('/login', data={'username': 'admin', 'password': 'rahasia123'})
+    assert r.status_code == 302
+    assert client.get('/').status_code == 200
+
+
+def test_login_gagal_password_salah(client):
+    """Password salah -> tetap di halaman login, ada pesan error."""
+    app_module.LOGIN_USERNAME = 'admin'
+    app_module.LOGIN_PASSWORD = 'rahasia123'
+    r = client.post('/login', data={'username': 'admin', 'password': 'salah'})
+    assert r.status_code == 200
+    assert b'salah' in r.data.lower()
+
+
+def test_login_aman_karakter_non_ascii(client):
+    """Input non-ASCII tidak boleh membuat server error (harus tetap 200)."""
+    app_module.LOGIN_USERNAME = 'admin'
+    app_module.LOGIN_PASSWORD = 'rahasia123'
+    r = client.post('/login', data={'username': 'ペタニ', 'password': 'ünïcode'})
+    assert r.status_code == 200
+
+
+def test_api_dilindungi_login(client):
+    """Saat login aktif & belum masuk, API membalas 401 (bukan halaman HTML)."""
+    app_module.LOGIN_USERNAME = 'admin'
+    app_module.LOGIN_PASSWORD = 'rahasia123'
+    r = client.get('/api/plants')
+    assert r.status_code == 401
+    assert r.get_json()['status'] == 'error'
+
+
+def test_endpoint_iot_tetap_terbuka_tanpa_login(client):
+    """POST /api/sensor (untuk alat IoT) tidak butuh login, cukup API key."""
+    app_module.LOGIN_USERNAME = 'admin'
+    app_module.LOGIN_PASSWORD = 'rahasia123'
+    payload = {'ph': 6.2, 'tds': 1000, 'temperature': 25,
+               'humidity': 60, 'water_level': 80}
+    assert client.post('/api/sensor', json=payload).status_code == 201
+
+
+def test_logout_mengakhiri_sesi(client):
+    """Setelah logout, dashboard kembali dialihkan ke halaman login."""
+    app_module.LOGIN_USERNAME = 'admin'
+    app_module.LOGIN_PASSWORD = 'rahasia123'
+    client.post('/login', data={'username': 'admin', 'password': 'rahasia123'})
+    assert client.get('/').status_code == 200
+
+    client.get('/logout')
+    assert client.get('/').status_code == 302
