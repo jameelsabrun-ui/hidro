@@ -44,6 +44,13 @@ Semua data bisa dibaca/ditulis lewat JSON API (lihat bagian **Contoh Penggunaan*
 - `GET  /api/plants`, `POST /api/plants`, `DELETE /api/plants/:id`
 - `GET  /api/schedules`, `POST /api/schedules/:id/toggle`
 
+### 🔒 Keamanan Dasar
+- **API key opsional**: `POST /api/sensor` bisa dikunci dengan header `X-API-Key` (diatur lewat `API_KEY` di `.env`).
+- **Rate limiting**: tiap IP dibatasi jumlah request data per menit (anti-spam, cegah disk penuh).
+- **Batas ukuran request** 1 MB, sehingga payload raksasa otomatis ditolak.
+
+> Ini proteksi dasar untuk pemakaian di **LAN rumah**. Untuk akses dari internet, tetap perlu **login + HTTPS** (lihat Tahap Deploy).
+
 ---
 
 ## 📂 Struktur Folder
@@ -116,6 +123,8 @@ Lalu buka `.env` dan sesuaikan. Isinya:
 | `FLASK_PORT` | `5000` | Port server. Ubah jika bentrok dengan program lain. |
 | `FLASK_DEBUG` | `0` | `0` = aman (disarankan). `1` = mode belajar (jangan dipakai di jaringan publik). |
 | `DB_PATH` | `hidroponik.db` | Nama file database. |
+| `API_KEY` | *(kosong)* | Kunci rahasia IoT. Jika diisi, `POST /api/sensor` wajib kirim header `X-API-Key`. |
+| `RATE_LIMIT_PER_MINUTE` | `60` | Batas request data per menit untuk satu alamat IP (anti-spam). |
 
 > File `.env` **tidak akan ikut ter-upload ke GitHub** (sudah diblokir lewat `.gitignore`), jadi aman untuk pengaturan pribadi.
 
@@ -176,7 +185,12 @@ data_sensor = {
 
 # Ganti IP sesuai komputer yang menjalankan Flask
 url = "http://127.0.0.1:5000/api/sensor"
-r = requests.post(url, json=data_sensor)
+
+# Jika API_KEY diisi di .env, header ini WAJIB ada.
+# Kalau API_KEY dikosongkan (default), header ini boleh tidak dikirim.
+headers = {"X-API-Key": "kunci-rahasia-anda"}
+
+r = requests.post(url, json=data_sensor, headers=headers)
 print("Status:", r.status_code)
 print("Response:", r.json())
 ```
@@ -193,6 +207,7 @@ void kirim_data() {
   HTTPClient http;
   http.begin("http://192.168.1.10:5000/api/sensor"); // IP server Flask
   http.addHeader("Content-Type", "application/json");
+  http.addHeader("X-API-Key", "kunci-rahasia-anda"); // wajib jika API_KEY diisi di .env
 
   StaticJsonDocument<200> doc;
   doc["ph"]          = 6.20;
@@ -214,7 +229,8 @@ Buka terminal lain (Flask harus tetap berjalan):
 # Lihat data sensor terbaru:
 curl -s http://localhost:5000/api/sensor/latest | python -m json.tool
 
-# Tambah data sensor manual:
+# Tambah data sensor manual
+# (tambahkan  -H 'X-API-Key: kunci-rahasia-anda'  jika API_KEY diaktifkan di .env)
 curl -X POST http://localhost:5000/api/sensor \
   -H 'Content-Type: application/json' \
   -d '{"ph":6.1,"tds":1100,"temperature":26,"humidity":65,"water_level":82}'
@@ -271,7 +287,9 @@ tests/test_app.py::test_kirim_sensor_diluar_rentang_ditolak PASSED
 | **9** | Menjalankan via `flask --app app run` → **data tanaman/jadwal kosong** | Karena init_db() dipindahkan ke blok `if __name__` (hindari DB lock worker) | Jalankan via `python app.py` (direkomendasikan). ATAU buka komentar `# init_db()` di [app.py:176](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L176). |
 | **10** | Data sensor tidak berubah walau ESP32 kirim tiap detik | **Auto refresh frontend 10 detik** / limit history 20 data terakhir | Ubah angka di `setInterval(loadSensorData, 10000)` [app.js:12](file:///home/memorygroups/Documents/trae_projects/hidro/static/js/app.js#L12) menjadi `3000` (3 detik) atau sesuai kebutuhan. |
 | **11** | Menambah jenis tanaman baru (misal "Umbi") tapi tidak opsi di select | HTML form + whitelist Python harus sinkron | Edit `<option value="Umbi">Umbi</option>` di [index.html:221-227](file:///home/memorygroups/Documents/trae_projects/hidro/templates/index.html#L221-L227) **DAN** tambahkan ke `VALID_PLANT_TYPES` di [app.py:34](file:///home/memorygroups/Documents/trae_projects/hidro/app.py#L34) + tambahkan emoji di `emojiMap` [app.js:375](file:///home/memorygroups/Documents/trae_projects/hidro/static/js/app.js#L375). |
-| **12** | Ingin reset semua data bersih (mulai dari nol) | Database sudah terisi banyak data percobaan | **Hapus file `hidroponik.db`** → restart server → database baru + seed awal otomatis dibuat ulang. |
+| **12** | Ingin reset semua data bersih (mulai dari nol) | Database sudah terisi banyak data percobaan | **Hapus file `hidroponik.db`** → restart server → database baru + seed awal dibuat ulang. |
+| **13** | Kirim data dari IoT → response **401 Unauthorized** | `API_KEY` diisi di `.env`, tapi header `X-API-Key` tidak dikirim atau salah | Kirim header `X-API-Key` dengan nilai persis sama seperti di `.env`. Atau kosongkan `API_KEY` untuk mematikan proteksi. |
+| **14** | Response **429 Too Many Requests** | Mengirim lebih dari batas request per menit (default 60) | Tunggu 1 menit, atau naikkan `RATE_LIMIT_PER_MINUTE` di `.env`. |
 
 ---
 

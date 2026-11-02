@@ -21,18 +21,25 @@ def client():
     tmp = tempfile.NamedTemporaryFile(suffix='.db', delete=False)
     tmp.close()
 
-    # 2. Arahkan aplikasi ke database sementara, lalu isi data awal
+    # 2. Simpan pengaturan asli, lalu atur kondisi bersih untuk test
+    api_key_asli = app_module.API_KEY
+    app_module.API_KEY = ''               # default test: proteksi API key dimatikan
+    app_module._riwayat_request.clear()   # reset catatan rate limit
+
+    # 3. Arahkan aplikasi ke database sementara, lalu isi data awal
     app_module.DB_PATH = tmp.name
     app_module.init_db()
 
-    # 3. TESTING=True -> jika ada error, langsung tampil (bukan halaman HTML)
+    # 4. TESTING=True -> jika ada error, langsung tampil (bukan halaman HTML)
     app_module.app.config['TESTING'] = True
 
-    # 4. Berikan "client" ke test, lalu bersihkan setelah test selesai
+    # 5. Berikan "client" ke test, lalu bersihkan setelah test selesai
     with app_module.app.test_client() as c:
         yield c
 
-    # Bersihkan file database + file WAL/SHM pendampingnya
+    # Kembalikan pengaturan asli + bersihkan file database (dan WAL/SHM-nya)
+    app_module.API_KEY = api_key_asli
+    app_module._riwayat_request.clear()
     for path in (tmp.name, tmp.name + '-wal', tmp.name + '-shm'):
         if os.path.exists(path):
             os.remove(path)
@@ -162,3 +169,50 @@ def test_toggle_jadwal(client):
 def test_toggle_jadwal_tidak_ditemukan(client):
     """Toggle id yang tidak ada -> 404."""
     assert client.post('/api/schedules/9999999/toggle').status_code == 404
+
+
+# ==================== TEST KEAMANAN API (Tahap 2) ====================
+
+def test_api_key_nonaktif_jika_kosong(client):
+    """Jika API_KEY kosong, POST /api/sensor tetap bisa tanpa header."""
+    payload = {'ph': 6.2, 'tds': 1000, 'temperature': 25,
+               'humidity': 60, 'water_level': 80}
+    assert client.post('/api/sensor', json=payload).status_code == 201
+
+
+def test_api_key_wajib_saat_diaktifkan(client):
+    """Jika API_KEY diatur, header X-API-Key wajib dan harus benar."""
+    app_module.API_KEY = 'rahasia123'
+    payload = {'ph': 6.2, 'tds': 1000, 'temperature': 25,
+               'humidity': 60, 'water_level': 80}
+
+    # Tanpa header -> 401
+    assert client.post('/api/sensor', json=payload).status_code == 401
+    # Header salah -> 401
+    r = client.post('/api/sensor', json=payload, headers={'X-API-Key': 'salah'})
+    assert r.status_code == 401
+    # Header benar -> 201
+    r = client.post('/api/sensor', json=payload, headers={'X-API-Key': 'rahasia123'})
+    assert r.status_code == 201
+
+
+def test_rate_limit_menolak_kelebihan_request(client):
+    """Setelah melewati batas per menit, request ditolak dengan 429."""
+    batas_asli = app_module.RATE_LIMIT_PER_MINUTE
+    app_module.RATE_LIMIT_PER_MINUTE = 5   # kecilkan agar test cepat
+    app_module._riwayat_request.clear()
+    try:
+        for _ in range(5):
+            assert client.post('/api/sensor/simulate').status_code == 200
+        # Request ke-6 harus ditolak
+        assert client.post('/api/sensor/simulate').status_code == 429
+    finally:
+        app_module.RATE_LIMIT_PER_MINUTE = batas_asli
+
+
+def test_body_terlalu_besar_ditolak(client):
+    """Body request lebih dari 1 MB -> 413 Request Entity Too Large."""
+    body_besar = 'x' * (2 * 1024 * 1024)  # 2 MB
+    r = client.post('/api/sensor', data=body_besar,
+                    content_type='application/json')
+    assert r.status_code == 413

@@ -3,6 +3,7 @@ from datetime import datetime, date
 import sqlite3
 import random
 import os
+import time
 
 # Baca konfigurasi dari file .env (jika ada).
 # Kalau python-dotenv belum diinstall, aplikasi tetap jalan pakai nilai default.
@@ -29,6 +30,20 @@ DB_PATH = os.path.join(
     os.environ.get('DB_PATH', 'hidroponik.db')
 )
 
+# --- Pengaturan keamanan (Tahap 2) ---
+
+# Kunci rahasia untuk perangkat IoT (OPSIONAL).
+# - Jika DIISI di .env  -> endpoint POST /api/sensor wajib kirim header X-API-Key.
+# - Jika DIKOSONGKAN    -> proteksi dimatikan (cukup untuk pemakaian di LAN rumah).
+API_KEY = os.environ.get('API_KEY', '')
+
+# Batas jumlah request data per MENIT untuk satu alamat IP (anti-spam).
+RATE_LIMIT_PER_MINUTE = int(os.environ.get('RATE_LIMIT_PER_MINUTE', '60'))
+
+# Batasi ukuran body request maksimal 1 MB (data sensor JSON sangat kecil,
+# jadi 1 MB sudah sangat longgar — ini mencegah payload raksasa).
+app.config['MAX_CONTENT_LENGTH'] = 1 * 1024 * 1024
+
 # Daftar nilai yang DIWOJALKAN (whitelist) untuk validasi input.
 # (ERR-4, VAL-3, VAL-4) menghindari user mengetik string sembarangan.
 VALID_PLANT_TYPES = ['Sayur Daun', 'Buah', 'Herbal', 'Bunga']
@@ -49,6 +64,41 @@ SENSOR_RANGES = {
 # - Untuk development pribadi / LAN tertutup (rumah/kos) sudah cukup.
 # - Jika ekspos ke internet nanti: pakai Nginx + HTTPS + sistem login (Flask-Login).
 # - Mode debug DINONAKTIFKAN untuk menghindari RCE via Werkzeug debugger.
+
+
+# ==================== PENGAMANAN SEDERHANA (Tahap 2) ====================
+
+# Catatan waktu request per alamat IP: {ip: [waktu1, waktu2, ...]}
+# Disimpan di memori saja, jadi otomatis kosong lagi saat server di-restart.
+_riwayat_request = {}
+
+
+def cek_api_key():
+    """
+    Memeriksa header X-API-Key pada request.
+    - Jika API_KEY belum diatur (kosong) -> proteksi dimatikan, selalu True.
+    - Jika API_KEY diatur di .env     -> header harus sama persis.
+    """
+    if not API_KEY:
+        return True
+    return request.headers.get('X-API-Key', '') == API_KEY
+
+
+def kena_rate_limit(ip, batas_per_menit):
+    """
+    Mencegah satu IP mengirim terlalu banyak request dalam 1 menit.
+    Mengembalikan True jika IP sudah melewati batas.
+    """
+    sekarang = time.time()
+    daftar = _riwayat_request.get(ip, [])
+    # Buang catatan yang umurnya lebih dari 60 detik
+    daftar = [t for t in daftar if sekarang - t < 60]
+    if len(daftar) >= batas_per_menit:
+        _riwayat_request[ip] = daftar
+        return True
+    daftar.append(sekarang)
+    _riwayat_request[ip] = daftar
+    return False
 
 
 # ==================== FUNGSI DATABASE HELPER ====================
@@ -278,6 +328,14 @@ def get_sensor_history():
 # Tambah data sensor (bisa dipanggil perangkat IoT nanti)
 @app.route('/api/sensor', methods=['POST'])
 def add_sensor_data():
+    # Keamanan: endpoint ini khusus perangkat IoT -> wajib API key (jika diaktifkan)
+    if not cek_api_key():
+        return jsonify({'status': 'error', 'error': 'API key salah atau tidak ada'}), 401
+
+    # Anti-spam: batasi jumlah request per menit dari satu IP
+    if kena_rate_limit(request.remote_addr, RATE_LIMIT_PER_MINUTE):
+        return jsonify({'status': 'error', 'error': 'Terlalu banyak permintaan, coba lagi nanti'}), 429
+
     body = request.get_json(silent=True) or {}
 
     # (CMPLX-1, ERR-3 fix): Validasi FIELD SATU PER SATU secara inline.
@@ -322,6 +380,10 @@ def add_sensor_data():
 # Perbaikan #G: Ubah dari GET ke POST (GET harus idempotent = tidak ubah state)
 @app.route('/api/sensor/simulate', methods=['POST'])
 def simulate_sensor():
+    # Anti-spam: tombol simulasi juga dibatasi agar tidak disalahgunakan
+    if kena_rate_limit(request.remote_addr, RATE_LIMIT_PER_MINUTE):
+        return jsonify({'status': 'error', 'error': 'Terlalu banyak permintaan, coba lagi nanti'}), 429
+
     conn = get_db()
     c = conn.cursor()
     now = datetime.now().strftime('%H:%M:%S')
